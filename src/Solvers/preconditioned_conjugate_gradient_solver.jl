@@ -196,10 +196,10 @@ function iterate!(x, solver, b, args...)
     @debug "PreconditionedConjugateGradientSolver $(solver.iteration), |z|: $(norm(z))"
 
     if solver.iteration == 0
-        p .= z
+        parent(p) .= parent(z)
     else
         β = ρ / solver.ρⁱ⁻¹
-        p .= z .+ β .* p
+        parent(p) .= parent(z) .+ β .* parent(p)
 
         @debug "PreconditionedConjugateGradientSolver $(solver.iteration), β: $β"
     end
@@ -211,8 +211,8 @@ function iterate!(x, solver, b, args...)
     @debug "PreconditionedConjugateGradientSolver $(solver.iteration), |q|: $(norm(q))"
     @debug "PreconditionedConjugateGradientSolver $(solver.iteration), α: $α"
         
-    x .+= α .* p
-    r .-= α .* q
+    parent(x) .+= α .* parent(p)
+    parent(r) .-= α .* parent(q)
 
     solver.iteration += 1
     solver.ρⁱ⁻¹ = ρ
