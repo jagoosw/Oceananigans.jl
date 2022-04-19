@@ -55,6 +55,8 @@ end
 
 @inline top_buoyancy_flux(i, j, grid, b::Buoyancy, args...) = top_buoyancy_flux(i, j, grid, b.model, args...)
 
+@inline ρ(i, j, k, grid, b::Buoyancy, C) = ρ(i, j, k, grid, b.model, C)
+
 regularize_buoyancy(b) = b
 regularize_buoyancy(b::AbstractBuoyancyModel) = Buoyancy(model=b)
 

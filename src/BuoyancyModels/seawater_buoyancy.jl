@@ -93,6 +93,8 @@ Base.nameof(::Type{SalinitySeawaterBuoyancy}) = "SalinitySeawaterBuoyancy"
               / b.equation_of_state.reference_density)
 end
 
+@inline ρ(i, j, k, grid, b::SeawaterBuoyancy, C) = @inbounds buoyancy_perturbation(i, j, k, grid, b, C) / b.gravitational_acceleration + b.equation_of_state.reference_density
+
 #####
 ##### Buoyancy gradient components
 #####
@@ -197,4 +199,3 @@ end
 
 @inline    top_buoyancy_flux(i, j, grid, b::SeawaterBuoyancy, args...) = top_bottom_buoyancy_flux(i, j, grid.Nz, grid, b, args...)
 @inline bottom_buoyancy_flux(i, j, grid, b::SeawaterBuoyancy, args...) = top_bottom_buoyancy_flux(i, j, 1, grid, b, args...)
-

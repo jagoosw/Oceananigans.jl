@@ -37,17 +37,16 @@ function update_state!(model::HydrostaticFreeSurfaceModel, grid)
     fill_horizontal_velocity_halos!(model.velocities.u, model.velocities.v, model.architecture)
 
     compute_w_from_continuity!(model)
-
     fill_halo_regions!(model.velocities.w, model.clock, fields(model))
 
     compute_auxiliary_fields!(model.auxiliary_fields)
 
+    update_hydrostatic_pressure!(model.pressure.pHY′, model.architecture, model.grid, model.buoyancy, model.tracers)
+    fill_halo_regions!(model.pressure.pHY′)
+
     # Calculate diffusivities
     calculate_diffusivities!(model.diffusivity_fields, model.closure, model)
     fill_halo_regions!(model.diffusivity_fields, model.clock, fields(model))
-
-    update_hydrostatic_pressure!(model.pressure.pHY′, model.architecture, model.grid, model.buoyancy, model.tracers)
-    fill_halo_regions!(model.pressure.pHY′)
 
     return nothing
 end
