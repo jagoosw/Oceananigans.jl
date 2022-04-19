@@ -102,12 +102,10 @@ end
 @inline mf_lower_diagonal(i, j, k, grid, args...) = - 1 / (2 * Δzᶜᶜᶠ(i, j, k, grid))
 
 @inline function mf_diagonal(i, j, k, grid, closure, buoyancy, pressure, diffusivities) 
-    plume_buoyancy = buoyancy_perturbation(i, j, k, grid, buoyancy, diffusivities)
-    return closure.Rᵅ * plume_buoyancy / pressure[i, j, k]
+    plume_buoyancy = buoyancy_perturbation(i, j, k, grid, buoyancy.model, diffusivities.ψₚ)
+    @show plume_buoyancy
+    return ifelse(pressure[i, j, k] == 0, 1.0, closure.Rᵅ * (plume_buoyancy + 1) / pressure[i, j, k])
 end
-
-@inline top_shear_stress(i, j, grid, velocities) = sqrt(ℑxᶜᵃᵃ(i, j, grid.Nz+1, grid, ∂zᶠᶜᶠ, velocities.u)^2 + 
-                                                        ℑyᵃᶜᵃ(i, j, grid.Nz+1, grid, ∂zᶜᶠᶠ, velocities.v)^2)
 
 @kernel function compute_plume_velocity_rhs!(diffusivities, grid, closure, buoyancy, tracers)
     i, j, k = @index(Global, NTuple)
@@ -124,13 +122,14 @@ end
 
     Qᵇ = top_buoyancy_flux(i, j, grid, buoyancy, tracer_bcs, clock, merge(velocities, tracers))
     w★ = abs(Qᵇ)^(1/3) 
-    u★ = sqrt(top_shear_stress(i, j, grid, velocities) / buoyancy.model.equation_of_state.reference_density)
+    u★ = 0.0
 
     if Qᵇ > 0
         diffusivities.aₚ[i, j, grid.Nz] = - closure.Cₘ * w★ / 2 * 3 / (w★ + u★)
     else
         diffusivities.aₚ[i, j, grid.Nz] = 0.0
     end
+
     @unroll for k in grid.Nz-1 : -1 : 1
         if !(is_stableᶜᶜᶠ(i, j, k, grid, tracers, buoyancy))
             L   = ∂zᶜᶜᶠ(i, j, k, grid, diffusivities.wₚ) / (ℑzᵃᵃᶜ(i, j, k, grid, diffusivities.wₚ) + 1e-16)
@@ -151,7 +150,7 @@ end
         if wₚ[i, j, k] == 0
             ψₚ[i, j, k] = ψₚ[i, j, k+1]
         else
-            rhs = abs(1 / wₚ[i, j, k] * ∂zᶜᶜᶠ(i, j, k, grid, wₚ)) + closure.εg
+            rhs = abs(∂zᶜᶜᶠ(i, j, k, grid, wₚ) / (ℑzᵃᵃᶜ(i, j, k, grid, wₚ) + 1e-16)) + closure.εg
             ψₚ[i, j, k] = ψₚ[i, j, k+1] - Δzᶜᶜᶠ(i, j, k, grid) * rhs
         end
     end
@@ -186,12 +185,16 @@ end
 
 @inline a_times_w(i, j, k, grid, a, w) = a[i, j, k] * w[i, j, k]
 
+####
+#### Explicit time discretization fluxes
+####
+
 @inline viscous_flux_uz(i, j, k, grid,  ::MF, K, U, C, clock, b) = - ℑxᶠᵃᵃ(i, j, k, grid, a_times_w, K.aₚ, K.wₚ) * (U.u[i, j, k] - K.uₚ.u[i, j, k])
 @inline viscous_flux_vz(i, j, k, grid,  ::MF, K, U, C, clock, b) = - ℑyᵃᶠᵃ(i, j, k, grid, a_times_w, K.aₚ, K.wₚ) * (U.v[i, j, k] - K.uₚ.v[i, j, k])
 
 @inline diffusive_flux_z(i, j, k, grid, ::MF, K, ::Val{id}, U, C, clk, b) where id = - K.aₚ[i, j, k] * K.wₚ[i, j, k] * (C[id][i, j, k] - K.ψₚ[id][i, j, k])
 
 ####
-#### Shenanigans for the implicit solver
+#### Shenanigans for implicit time discretization
 ####
 
