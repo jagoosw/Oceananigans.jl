@@ -6,7 +6,6 @@ Linear equation of state for seawater.
 struct LinearEquationOfState{FT} <: AbstractEquationOfState
     thermal_expansion :: FT
     haline_contraction :: FT
-    reference_density :: FT
 end
 
 Base.summary(eos::LinearEquationOfState) =
@@ -34,8 +33,8 @@ for `thermal_expansion` and `haline_contraction`, respectively,
 are taken from Table 1.2 (page 33) of Vallis, "Atmospheric and Oceanic Fluid
 Dynamics: Fundamentals and Large-Scale Circulation" (2nd ed, 2017).
 """
-LinearEquationOfState(FT=Float64; thermal_expansion=1.67e-4, haline_contraction=7.80e-4, reference_density=1029.0) =
-    LinearEquationOfState{FT}(thermal_expansion, haline_contraction, reference_density)
+LinearEquationOfState(FT=Float64; thermal_expansion=1.67e-4, haline_contraction=7.80e-4) =
+    LinearEquationOfState{FT}(thermal_expansion, haline_contraction)
 
 #####
 ##### Thermal expansion and haline contraction coefficients

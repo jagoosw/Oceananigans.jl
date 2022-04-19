@@ -1,27 +1,27 @@
 using Oceananigans.Architectures: architecture, device_event, arch_array
-using Oceananigans.BuoyancyModels: ∂z_b, top_buoyancy_flux, z_dot_g_b, ρ
-using SeawaterPolynomials: ρ′
+using Oceananigans.BuoyancyModels: top_buoyancy_flux, z_dot_g_b, buoyancy_perturbation
 using Oceananigans.Operators
 using KernelAbstractions.Extras.LoopInfo: @unroll
 
-struct MassFluxVerticalDiffusivity{TD, E, A1, A2, B1, B2, C} <: AbstractScalarDiffusivity{TD, VerticalFormulation}
+struct MassFluxVerticalDiffusivity{TD, E, A1, A2, RA, B1, B2, C} <: AbstractScalarDiffusivity{TD, VerticalFormulation}
     εg :: E
     a₁ :: A1
     α  :: A2
+    Rᵅ :: RA
     β₁ :: B1
     β₂ :: B2
     Cₘ :: C 
 
-    function MassFluxVerticalDiffusivity{TD}(εg::E, a₁::A1, α::A2, 
-                                             β₁::B1, β₂::B2, Cₘ::C) where {TD, E, A1, A2, B1, B2, C}
-        return new{TD, E, A1, A2, B1, B2, C}(εg, a₁, α, β₁, β₂, Cₘ)
+    function MassFluxVerticalDiffusivity{TD}(εg::E, a₁::A1, α::A2, Rᵅ::RA, 
+                                             β₁::B1, β₂::B2, Cₘ::C) where {TD, E, A1, A2, RA, B1, B2, C}
+        return new{TD, E, A1, A2, RA, B1, B2, C}(εg, a₁, α, Rᵅ::RA, β₁, β₂, Cₘ)
     end
 end
 
 const MF = MassFluxVerticalDiffusivity
 
-function MassFluxVerticalDiffusivity(; εg=0.001, a₁=1, α=0.2, β₁=0.9, β₂=0.9, Cₘ=-0.065) where TD
-    return MassFluxVerticalDiffusivity{ExplicitTimeDiscretization}(εg, a₁, α, β₁, β₂, Cₘ)
+function MassFluxVerticalDiffusivity(; εg=0.001, a₁=1, α=0.2, Rᵅ=100, β₁=0.9, β₂=0.9, Cₘ=-0.065) where TD
+    return MassFluxVerticalDiffusivity{ExplicitTimeDiscretization}(εg, a₁, α, Rᵅ, β₁, β₂, Cₘ)
 end
 
 #####
@@ -102,9 +102,8 @@ end
 @inline mf_lower_diagonal(i, j, k, grid, args...) = - 1 / (2 * Δzᶜᶜᶠ(i, j, k, grid))
 
 @inline function mf_diagonal(i, j, k, grid, closure, buoyancy, pressure, diffusivities) 
-    plume_density = ρ(i, j, k, grid, buoyancy, diffusivities.ψₚ)
-    @show i, j, k, plume_density
-    return closure.α * plume_density / pressure[i, j, k]
+    plume_buoyancy = buoyancy_perturbation(i, j, k, grid, buoyancy, diffusivities)
+    return closure.Rᵅ * plume_buoyancy / pressure[i, j, k]
 end
 
 @inline top_shear_stress(i, j, grid, velocities) = sqrt(ℑxᶜᵃᵃ(i, j, grid.Nz+1, grid, ∂zᶠᶜᶠ, velocities.u)^2 + 
