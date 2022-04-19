@@ -20,9 +20,8 @@ end
 
 const MF = MassFluxVerticalDiffusivity
 
-function MassFluxVerticalDiffusivity(time_discretization::TD=VerticallyImplicitTimeDiscretization(), 
-                                     εg=0.001, a₁=1, α=0.2, β₁=0.9, β₂=0.9, Cₘ=-0.065) where TD
-    return MassFluxVerticalDiffusivity{TD}(εg, a₁, α, β₁, β₂, Cₘ)
+function MassFluxVerticalDiffusivity(; εg=0.001, a₁=1, α=0.2, β₁=0.9, β₂=0.9, Cₘ=-0.065) where TD
+    return MassFluxVerticalDiffusivity{ExplicitTimeDiscretization}(εg, a₁, α, β₁, β₂, Cₘ)
 end
 
 #####
