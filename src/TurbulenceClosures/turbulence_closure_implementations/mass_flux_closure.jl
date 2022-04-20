@@ -20,7 +20,7 @@ end
 
 const MF = MassFluxVerticalDiffusivity
 
-function MassFluxVerticalDiffusivity(; εg=0.001, a₁=1, α=0.2, Rᵅ=100, β₁=0.9, β₂=0.9, Cₘ=-0.065) where TD
+function MassFluxVerticalDiffusivity(; εg=0.001, a₁=0.001, α=0.2, Rᵅ=100, β₁=0.9, β₂=0.9, Cₘ=-0.065) where TD
     return MassFluxVerticalDiffusivity{ExplicitTimeDiscretization}(εg, a₁, α, Rᵅ, β₁, β₂, Cₘ)
 end
 
@@ -36,6 +36,10 @@ with_tracers(tracers, closure::FlavorOfMF) = closure
 @inline viscosity_location(::FlavorOfMF) = (Center(), Center(), Face())
 @inline diffusivity_location(::FlavorOfMF) = (Center(), Center(), Face())
 
+
+#=
+
+# Mass flux parameters at the centers
 function calculate_diffusivities!(diffusivities, closure::FlavorOfMF, model)
     grid = model.grid
     arch = model.architecture
@@ -69,7 +73,7 @@ function calculate_diffusivities!(diffusivities, closure::FlavorOfMF, model)
     wait(device(arch), event)
 
     event = launch!(arch, grid, :xy,
-                    compute_plume_areas!, diffusivities, grid, closure, velocities, tracers, buoyancy, top_tracer_bcs,
+                    compute_plume_areas!, diffusivities, grid, closure, tracers, buoyancy, top_tracer_bcs,
                     dependencies = device_event(arch))
 
     wait(device(arch), event)
@@ -117,10 +121,10 @@ end
     diffusivities.wₚ[i, j, k] = - sqrt(abs(diffusivities.wₚ[i, j, k]))
 end
 
-@kernel function compute_plume_areas!(diffusivities, grid, closure, velocities, tracers, buoyancy, tracer_bcs)
+@kernel function compute_plume_areas!(diffusivities, grid, closure, tracers, buoyancy, tracer_bcs)
     i, j = @index(Global, NTuple)
 
-    Qᵇ = top_buoyancy_flux(i, j, grid, buoyancy, tracer_bcs, clock, merge(velocities, tracers))
+    Qᵇ = top_buoyancy_flux(i, j, grid, buoyancy, tracer_bcs, clock, tracers)
     w★ = abs(Qᵇ)^(1/3) 
     u★ = 0.0
 
@@ -163,9 +167,6 @@ function DiffusivityFields(grid, tracer_names, user_bcs, ::MF)
 
     wₚ_rhs = CenterField(grid)
 
-    uₚ = Field((Face, Center, Center), grid)
-    vₚ = Field((Center, Face, Center), grid)
-    
     ψₚ_tracers = []
 
     for i = 1:length(tracer_names)
@@ -173,28 +174,136 @@ function DiffusivityFields(grid, tracer_names, user_bcs, ::MF)
     end
 
     ψₚ = NamedTuple{tracer_names}(Tuple(ψₚ_tracers))
-    uₚ = (u = uₚ, v = vₚ)
 
     wₚ_solver = BatchedTridiagonalSolver(grid;
                                         lower_diagonal = mf_lower_diagonal,
                                         diagonal = mf_diagonal,
                                         upper_diagonal = mf_upper_diagonal)
 
-    return (; aₚ, wₚ, uₚ, ψₚ, wₚ_solver, wₚ_rhs)
+    return (; aₚ, wₚ, ψₚ, wₚ_solver, wₚ_rhs)
+end
+=#
+
+"""
+The mass flux turbulence closure approximates
+
+⟨w′ψ′⟩ = aₚwₚ⋅(ψ - ψₚ) 
+
+"""
+# Mass flux parameters at the Faces
+@kernel function compute_plume_properties!(wₚ, aₚ, ψₚ, grid, closure, buoyancy, tracers, tracer_bcs, pressure)
+    i, j = @index(Global, NTuple)
+
+    g = buoyancy.model.gravitational_acceleration
+    Qᵇ = top_buoyancy_flux(i, j, grid, buoyancy, tracer_bcs, clock, tracers)
+    w★ = abs(Qᵇ)^(1/3) 
+    u★ = 0.0
+    aₚ₀ = ifelse(Qᵇ > 0, - closure.Cₘ * w★ / 2 * 3 / (w★ + u★), 0.0)
+
+    ## Calculating plume's properties
+    for (idx, ψ) in enumerate(ψₚ)
+        tr = tracers[idx]
+        ψ[i, j, grid.Nz+1] = ℑzᵃᵃᶠ(i, j, grid.Nz+1, grid, tr)
+        @unroll for k in grid.Nz : -1 : 1
+            L = abs(∂zᶜᶜᶜ(i, j, k, grid, - wₚ)) + closure.εg
+
+            cₖ₊₁ = L / 2 - 1 / Δzᶜᶜᶜ(i, j, k, grid)
+            cₖ   = L / 2 + 1 / Δzᶜᶜᶜ(i, j, k, grid)
+
+            ψ[i, j, k] = ifelse(wₚ[i, j, k] == 0, 
+                                ℑzᵃᵃᶠ(i, j, k, grid, tr),
+                                (L * tr[i, j, k] - ψ[i, j, k+1] * cₖ₊₁) / cₖ)
+        end
+    end
+
+    ## Calculating plume's vertical velocity
+    wₚ[i, j, grid.Nz + 1] = 0
+    @unroll for k in grid.Nz : -1 : 1
+
+        bₚ = ℑzᵃᵃᶜ(i, j, k, grid, plume_buoyancy, buoyancy, tracers, ψₚ)
+
+        buoyancy_prod = closure.a₁ * bₚ 
+        convec_resist = ifelse(pressure[i, j, k] == 0, 0.0, closure.α * bₚ / pressure[i, j, k])
+
+        cₖ₊₁ = convec_resist / 2 - (closure.α + 0.5) / Δzᶜᶜᶜ(i, j, k, grid)
+        cₖ   = convec_resist / 2 + (closure.α + 0.5) / Δzᶜᶜᶜ(i, j, k, grid)
+
+        wₚ[i, j, k] = (buoyancy_prod - wₚ[i, j, k+1] * cₖ₊₁) / cₖ
+
+        @show buoyancy_prod, convec_resist
+    end
+
+    @unroll for k in 1:grid.Nz+1
+        wₚ[i, j, k] = - sqrt(abs(wₚ[i, j, k]))
+    end
+
+    ## Calculating plume's areas
+    aₚ[i, j, grid.Nz+1] = aₚ₀
+    @unroll for k in grid.Nz : -1 : 1
+        if wₚ[i, j, k] != 0
+            L = ∂zᶜᶜᶜ(i, j, k, grid, wₚ) / ℑzᵃᵃᶜ(i, j, k, grid, wₚ) 
+
+            εₐₚ =   closure.β₁ * max(0, L)
+            δₐₚ = - closure.β₂ * min(0, L)
+
+            cₖ₊₁ = 1 / Δzᶜᶜᶜ(i, j, k, grid) - (- L + εₐₚ - δₐₚ) / 2 
+            cₖ   = 1 / Δzᶜᶜᶜ(i, j, k, grid) + (- L + εₐₚ - δₐₚ) / 2 
+
+            aₚ[i, j, k] = aₚ[i, j, k+1] * cₖ₊₁ / cₖ
+        end
+    end
 end
 
-@inline a_times_w(i, j, k, grid, a, w) = a[i, j, k] * w[i, j, k]
+function calculate_diffusivities!(diffusivities, closure::FlavorOfMF, model)
+    grid = model.grid
+    arch = model.architecture
+    tracers = model.tracers
+    buoyancy = model.buoyancy
+    pressure = model.pressure.pHY′
+
+    tracer_bcs = NamedTuple(c => tracers[c].boundary_conditions.top for c in propertynames(tracers))
+
+    event = launch!(arch, grid, :xy,
+                    compute_plume_properties!, 
+                    diffusivities.wₚ,
+                    diffusivities.aₚ,
+                    diffusivities.ψₚ,
+                    grid, closure, buoyancy, tracers, tracer_bcs, pressure,
+                    dependencies = device_event(arch))
+
+    wait(device(arch), event)
+
+    return nothing
+end
+
+function DiffusivityFields(grid, tracer_names, user_bcs, ::MF)
+    aₚ = ZFaceField(grid)
+    wₚ = ZFaceField(grid)
+
+    ψₚ_tracers = []
+
+    for i = 1:length(tracer_names)
+        push!(ψₚ_tracers, ZFaceField(grid))
+    end
+
+    ψₚ = NamedTuple{tracer_names}(Tuple(ψₚ_tracers))
+
+    return (; aₚ, wₚ, ψₚ)
+end
+
+@inline function plume_buoyancy(i, j, k, grid, buoyancy, tracers, plume_tracers) 
+
+    return ℑzᵃᵃᶠ(i, j, k, grid, buoyancy_perturbation, buoyancy.model, tracers) -
+           buoyancy_perturbation(i, j, k, grid, buoyancy.model, plume_tracers)
+end
 
 ####
 #### Explicit time discretization fluxes
 ####
 
-@inline viscous_flux_uz(i, j, k, grid,  ::MF, K, U, C, clock, b) = - ℑxᶠᵃᵃ(i, j, k, grid, a_times_w, K.aₚ, K.wₚ) * (U.u[i, j, k] - K.uₚ.u[i, j, k])
-@inline viscous_flux_vz(i, j, k, grid,  ::MF, K, U, C, clock, b) = - ℑyᵃᶠᵃ(i, j, k, grid, a_times_w, K.aₚ, K.wₚ) * (U.v[i, j, k] - K.uₚ.v[i, j, k])
-
-@inline diffusive_flux_z(i, j, k, grid, ::MF, K, ::Val{id}, U, C, clk, b) where id = - K.aₚ[i, j, k] * K.wₚ[i, j, k] * (C[id][i, j, k] - K.ψₚ[id][i, j, k])
+@inline diffusive_flux_z(i, j, k, grid, ::MF, K, ::Val{id}, U, C, clk, b) where id = 
+        K.aₚ[i, j, k] * K.wₚ[i, j, k] * (ℑzᵃᵃᶠ(i, j, k, grid, C[id]) - K.ψₚ[id][i, j, k])
 
 ####
 #### Shenanigans for implicit time discretization
 ####
-
