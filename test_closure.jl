@@ -60,7 +60,7 @@ bot_T_flux = file["parameters/boundary_condition_θ_bottom"]
 
 buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4), constant_salinity = 35)
 
-Nz = 64
+Nz = 16
 
 grid = RectilinearGrid(size = (1, 1, Nz), extent = (1, 1, 256), topology = (Periodic, Periodic, Bounded))
 grid_Les = RectilinearGrid(size = (1, 1, 256), extent = (1, 1, 256), topology = (Periodic, Periodic, Bounded))

@@ -20,7 +20,7 @@ end
 
 const MF = MassFluxVerticalDiffusivity
 
-function MassFluxVerticalDiffusivity(; εg=0.01, a₁=2.0/3.0, α=0.2, Rᵅ=1000, β₁=0.9, β₂=0.9, Cₘ=0.065) where TD
+function MassFluxVerticalDiffusivity(; εg=0.1, a₁=2.0/3.0, α=0.2, Rᵅ=2.0, β₁=0.9, β₂=0.9, Cₘ=0.065) where TD
     return MassFluxVerticalDiffusivity{ExplicitTimeDiscretization}(εg, a₁, α, Rᵅ, β₁, β₂, Cₘ)
 end
 
@@ -35,10 +35,28 @@ const FlavorOfMF = Union{MF, MFArray}
 with_tracers(tracers, closure::FlavorOfMF) = closure
 
 """
-The mass flux turbulence closure approximates
+Mass Flux turbulence closure 
 
+```math
 ⟨w′ψ′⟩ = aₚwₚ⋅(ψ - ψₚ) 
+```
 
+Closure equations:
+
+vertical plume velocity
+```math
+(α + 0.5) (∂z wₚ²) + Cᵣ wₚ² = Bₚ
+```
+
+fractional plume area
+```math
+∂z aₚ = aₚ ⋅ ( wₚ⁻¹ ∂z wₚ + εₐₚ - δₐₚ )
+```
+
+plume properties
+```math
+∂z ψₚ + εₚ ψₚ = εₚ ψ
+```
 """
 # Mass flux parameters at the Faces (wₚ, aₚ) while (εₚ, ψₚ) at Centers 
 @kernel function compute_plume_properties!(wₚ, aₚ, εₚ, ψₚ, grid, closure, buoyancy, tracers, tracer_bcs)
@@ -55,25 +73,20 @@ The mass flux turbulence closure approximates
     ## Calculating plume's vertical velocity
     wₚ[i, j, grid.Nz + 1] = 0
     @unroll for k in grid.Nz : -1 : 1
-        if wₚ[i, j, k+1] == 0 && k < grid.Nz
-            wₚ[i, j, k] = 0.0
-        else
-            bₚ    = buoyancy_perturbation(i, j, k, grid, buoyancy.model, ψₚ)
-            bprod = bouyancy_production(i, j, k, grid, closure, g, buoyancy, tracers, bₚ)
-            cres  = cnvctive_resistance(i, j, k, grid, closure, g, bₚ, εₚ)
-    
-            bprod *= Δzᶜᶜᶜ(i, j, k, grid)
-            cres  *= Δzᶜᶜᶜ(i, j, k, grid)
-    
-            cₖ₊₁ = (closure.α + 0.5) - cres / 2 
-            cₖ   = (closure.α + 0.5) + cres / 2 
-    
-            # updating wₚ²
-            wₚ²  = max((bprod + wₚ² * cₖ₊₁) / cₖ, 0.0)
-            wₚ[i, j, k] = - sqrt(wₚ²)
+        bₚ    = buoyancy_perturbation(i, j, k, grid, buoyancy.model, ψₚ)
+        bprod = buoyancy_production(i, j, k, grid, closure, g, buoyancy, tracers, bₚ)
+        cres  = cnvctive_resistance(i, j, k, grid, closure, g, bₚ, εₚ)
 
-            @show bprod, cres, bₚ
-        end
+        bprod *= Δzᶜᶜᶜ(i, j, k, grid)
+        cres  *= Δzᶜᶜᶜ(i, j, k, grid)
+
+        cₖ₊₁ = (closure.α + 0.5) - cres / 2 
+        cₖ   = (closure.α + 0.5) + cres / 2 
+
+        @show bprod, cₖ₊₁, cₖ, bₚ, (bprod + wₚ² * cₖ₊₁) / cₖ, wₚ²
+        # updating wₚ²
+        wₚ²  = max((bprod + wₚ² * cₖ₊₁) / cₖ, 0.0)
+        wₚ[i, j, k] = sqrt( wₚ² )
     end
     
     ## Calculating plume's areas
@@ -81,8 +94,8 @@ The mass flux turbulence closure approximates
     @unroll for k in grid.Nz : -1 : 1
 
         wᵢ = max(wₚ[i, j, k+1], wₚ[i, j, k])
-        if wᵢ < 0
-            L = ∂zᶜᶜᶜ(i, j, k, grid, wₚ) / wᵢ
+        if wᵢ > 0
+            L = - ∂zᶜᶜᶜ(i, j, k, grid, wₚ) / wᵢ
 
             εₐₚ =   closure.β₁ * max(0, L)
             δₐₚ = - closure.β₂ * min(0, L)
@@ -100,7 +113,7 @@ The mass flux turbulence closure approximates
     ## Calculating entrainment coefficient
     @unroll for k in grid.Nz : -1 : 1
         wᵢ = ℑzᵃᵃᶜ(i, j, k, grid, wₚ)
-        εₚ[i, j, k] = wᵢ < 0 ? abs(∂zᶜᶜᶜ(i, j, k, grid, wₚ)) / wᵢ + closure.εg : 0
+        εₚ[i, j, k] = wᵢ > 0 ? abs(∂zᶜᶜᶜ(i, j, k, grid, wₚ)) / wᵢ + closure.εg : 0
     end
 
     ## Calculating plume's properties
@@ -110,10 +123,9 @@ The mass flux turbulence closure approximates
             L    = ℑzᵃᵃᶠ(i, j, k+1, grid, εₚ) * Δzᶜᶜᶠ(i, j, k, grid)
             cₖ₊₁ = 1 - 0.5 * L
             cₖ   = 1 + 0.5 * L
-            wᵢ   = ℑzᵃᵃᶜ(i, j, k, grid, wₚ)
-            ψ[i, j, k] = ifelse(- wᵢ < 1e-12, 
+            ψ[i, j, k] = ifelse(wₚ[i, j, k+1] < 1e-12, 
                                 tr[i, j, k],
-                                (L * ℑzᵃᵃᶠ(i, j, k+1, grid, tr) + ψ[i, j, k+1] * cₖ₊₁) / cₖ)
+                                (L * ℑzᵃᵃᶠ(i, j, k+1, grid, tr) + ψ[i, j, k+1] * cₖ₊₁) / cₖ) 
         end
     end
 end
@@ -163,14 +175,27 @@ function DiffusivityFields(grid, tracer_names, user_bcs, ::MF)
     return (; aₚ, wₚ, εₚ, ψₚ)
 end
 
-# We have to remove very small fluctuations because of stability
-@inline function bouyancy_production(i, j, k, grid, closure, g, buoyancy, tracers, bₚ) 
+"""
+Buoyancy production of plume's vertical velocity
+
+```math
+Bₚ = a₁ g (ρₚ - ρₑ) / ρₑ 
+```
+"""
+@inline function buoyancy_production(i, j, k, grid, closure, g, buoyancy, tracers, bₚ) 
     bₑ = buoyancy_perturbation(i, j, k, grid, buoyancy.model, tracers)
     return closure.a₁ * g * (bₚ - bₑ) / (bₑ + g)
 end
 
-@inline cnvctive_resistance(i, j, k, grid, closure, g, bₚ, εₚ) =  - closure.α * (bₚ + g) / 
-                                                                    znode(Center(), Center(), Center(), i, j, k, grid) + εₚ[i, j, k]
+"""
+Resistance to downwards convection
+
+```math
+Cᵣ = Rᵅ g (ρₚ / pₕ) 
+```
+"""
+@inline cnvctive_resistance(i, j, k, grid, closure, g, bₚ, εₚ) =  
+        - closure.Rᵅ * (bₚ + g) / znode(Center(), Center(), Center(), i, j, k, grid) + εₚ[i, j, k]
 
 ####
 #### Explicit time discretization fluxes
@@ -179,7 +204,7 @@ end
 @inline c_minus_ψₚ(i, j, k, grid, C, K, ::Val{id}) where id = C[id][i, j, k] - K.ψₚ[id][i, j, k]
 
 @inline diffusive_flux_z(i, j, k, grid, ::MF, K, ::Val{id}, U, C, clk, b) where id = 
-        - K.aₚ[i, j, k] * K.wₚ[i, j, k] * ℑzᵃᵃᶠ(i, j, k, grid, c_minus_ψₚ, C, K, Val(id))
+       K.aₚ[i, j, k] * K.wₚ[i, j, k] * ℑzᵃᵃᶠ(i, j, k, grid, c_minus_ψₚ, C, K, Val(id))
 
 ####
 #### Shenanigans for implicit time discretization
