@@ -60,7 +60,9 @@ bot_T_flux = file["parameters/boundary_condition_θ_bottom"]
 
 buoyancy = SeawaterBuoyancy(equation_of_state = LinearEquationOfState(thermal_expansion = 2e-4), constant_salinity = 35)
 
-grid = RectilinearGrid(size = (1, 1, 32), extent = (1, 1, 256), topology = (Periodic, Periodic, Bounded))
+Nz = 64
+
+grid = RectilinearGrid(size = (1, 1, Nz), extent = (1, 1, 256), topology = (Periodic, Periodic, Bounded))
 grid_Les = RectilinearGrid(size = (1, 1, 256), extent = (1, 1, 256), topology = (Periodic, Periodic, Bounded))
 
 T_init = file["timeseries/T/0"][:, :, 4:end-3]
@@ -69,8 +71,8 @@ set!(T_Les, T_init)
 
 using Oceananigans.Fields: interpolate
 
-T_mine = zeros(1, 1, 32)
-for k in 1:32
+T_mine = zeros(1, 1, Nz)
+for k in 1:Nz
     T_mine[1, 1, k] = interpolate(T_Les, Center(), Center(), Center(), grid_Les, grid.xᶜᵃᵃ[1], grid.yᵃᶜᵃ[1], grid.zᵃᵃᶜ[k])
 end
 
@@ -102,3 +104,11 @@ end
     
 grid_new = RectilinearGrid(size = (1, 1, 50), extent = (1, 1, 1000), topology = (Periodic, Periodic, Bounded))
 
+model = HydrostaticFreeSurfaceModel(grid = grid_new, 
+                                    buoyancy = buoyancy,
+                                    velocities = PrescribedVelocityFields(),
+                                    tracers = :T,
+                                    boundary_conditions = (; T = Tbcs),
+                                    closure = mf)
+
+set!(model, T = (x, y, z) -> 3 + (z / 1000))                                    
