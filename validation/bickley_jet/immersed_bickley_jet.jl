@@ -18,8 +18,6 @@ using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid, GridFittedBottom
 using Oceananigans.Operators: Δx, Δy
 using Oceananigans.TurbulenceClosures
 
-CUDA.device!(1)
-
 include("bickley_utils.jl")
 
 """
@@ -48,8 +46,8 @@ function run_bickley_jet(; output_time_interval = 2, stop_time = 200, arch = CPU
     timescale = (5days / (6minutes) * Δt)
     @show prettytime(timescale)
 
-    @inline νhb(i, j, k, grid, lx, ly, lz) = (1 / (1 / Δx(i, j, k, grid, lx, ly, lz)^2 + 1 / Δy(i, j, k, grid, lx, ly, lz)^2 ))^2 / timescale
-    biharmonic_viscosity = HorizontalScalarBiharmonicDiffusivity(ν=νhb, discrete_form=true) 
+    # @inline νhb(i, j, k, grid, lx, ly, lz) = (1 / (1 / Δx(i, j, k, grid, lx, ly, lz)^2 + 1 / Δy(i, j, k, grid, lx, ly, lz)^2 ))^2 / timescale
+    # biharmonic_viscosity = HorizontalScalarBiharmonicDiffusivity(ν=νhb, discrete_form=true) 
 
     model = HydrostaticFreeSurfaceModel(momentum_advection = momentum_advection,
                                         tracer_advection = WENO5(),
@@ -100,8 +98,7 @@ function run_bickley_jet(; output_time_interval = 2, stop_time = 200, arch = CPU
     simulation.output_writers[:fields] =
         JLD2OutputWriter(model, outputs,
                                 schedule = TimeInterval(output_time_interval),
-                                prefix = experiment_name,
-                                force = true)
+                                filename = experiment_name)
 
     @info "Running a simulation of an unstable Bickley jet with $(Nh)² degrees of freedom..."
 
@@ -169,9 +166,12 @@ advection_schemes = [WENO5(vector_invariant=VelocityStencil()),
                      WENO5(),
                      VectorInvariant()]
 
+coeffs = Tuple(Tuple(rand() for i in 1:6) for j in 1:6)
+advection_schemes = [WENO5(vector_invariant = VorticityStencil(), smoothness_coeffs = coeffs)]
+                     
 for Nx in [128]
     for advection in advection_schemes
-        experiment_name = run_bickley_jet(arch=GPU(), momentum_advection=advection, Nh=Nx)
-        # visualize_bickley_jet(experiment_name)
+        experiment_name = run_bickley_jet(arch=CPU(), momentum_advection=advection, Nh=Nx)
+        visualize_bickley_jet(experiment_name)
     end
 end

@@ -366,6 +366,7 @@ end
 ##### JS-WENO-5 reconstruction
 #####
 
+#### Smoothness calculation
 for (dir, sup) in zip([:left, :right], [:ᴸ, :ᴿ]), stencil in [:β₀, :β₁, :β₂]
     biased_β = Symbol(dir, :_biased_, stencil, :_parameterization)
     coeffs   = Symbol(:C, stencil, sup)
