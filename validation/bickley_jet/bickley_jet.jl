@@ -52,7 +52,7 @@ function run_bickley_jet(;
     simulation.output_writers[:fields] =
         JLD2OutputWriter(model, outputs,
                                 schedule = TimeInterval(output_time_interval),
-                                prefix = output_name,
+                                filename = output_name,
                                 overwrite_existing = true)
 
     @info "Running a simulation of an unstable Bickley jet with $(Nh)² degrees of freedom..."
@@ -104,7 +104,8 @@ function visualize_bickley_jet(name)
     end
 end
 
-advection_schemes = [CenteredSecondOrder(), WENO5()]
+coeffs = Tuple(Tuple(rand() for i in 1:6) for j in 1:6)
+advection_schemes = [WENO5(vector_invariant = VorticityStencil(), smoothness_coeffs = coeffs)]
 
 #=
 advection_schemes = [WENO5(vector_invariant=VelocityStencil()),

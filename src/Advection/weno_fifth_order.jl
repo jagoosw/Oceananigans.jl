@@ -1,6 +1,7 @@
 #####
 ##### Weighted Essentially Non-Oscillatory (WENO) fifth-order advection scheme
 #####
+using KernelAbstractions.Extras.LoopInfo: @unroll
 
 using OffsetArrays
 using Oceananigans.Grids: with_halo
@@ -25,7 +26,7 @@ Weighted Essentially Non-Oscillatory (WENO) fifth-order advection scheme.
 
 $(TYPEDFIELDS)
 """
-struct WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, WF} <: AbstractUpwindBiasedAdvectionScheme{2}
+struct WENO5{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF} <: AbstractUpwindBiasedAdvectionScheme{2}
     
     "coefficient for ENO reconstruction on x-faces" 
     coeff_xᶠᵃᵃ::XT
@@ -53,10 +54,13 @@ struct WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, WF} <: AbstractUpwindBiasedAdvectio
     "coefficient for WENO smoothness indicators on z-centers"
     smooth_zᵃᵃᶜ::ZS
 
-    "coefficient for WENO reconstruction, optimal weights"
-    C3₀ :: FT
-    C3₁ :: FT 
-    C3₂ :: FT
+    "coefficients for smoothness stencils"
+    Cβ₀ᴸ :: SC
+    Cβ₁ᴸ :: SC
+    Cβ₂ᴸ :: SC
+    Cβ₀ᴿ :: SC
+    Cβ₁ᴿ :: SC
+    Cβ₂ᴿ :: SC
 end
 
 """
@@ -142,7 +146,8 @@ Shu, Essentially Non-Oscillatory and Weighted Essentially Non-Oscillatory Scheme
 Castro et al, High order weighted essentially non-oscillatory WENO-Z schemes for hyperbolic conservation
     laws, 2011, Journal of Computational Physics, 230(5), 1766-1792
 """
-function WENO5(coeffs = nothing, FT = Float64; 
+function WENO5(FT = Float64; 
+               smoothness_coeffs = nothing,
                grid = nothing, 
                stretched_smoothness = false, 
                zweno = true, 
@@ -179,27 +184,38 @@ function WENO5(coeffs = nothing, FT = Float64;
     YS = typeof(smooth_yᵃᶠᵃ)
     ZS = typeof(smooth_zᵃᵃᶠ)
 
-    C3₀, C3₁, C3₂ = FT.((3/10, 3/5, 1/10))
+    Cβ₀ᴸ = nothing
+    Cβ₁ᴸ = nothing
+    Cβ₂ᴸ = nothing
+    Cβ₀ᴿ = nothing
+    Cβ₁ᴿ = nothing
+    Cβ₂ᴿ = nothing
+    if !isnothing(smoothness_coeffs)
+        Cβ₀ᴸ, Cβ₁ᴸ, Cβ₂ᴸ, Cβ₀ᴿ, Cβ₁ᴿ, Cβ₂ᴿ = smoothness_coeffs 
+    end
 
+    SC = typeof(Cβ₀ᴸ)
     VI = typeof(vector_invariant)
 
-    return WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, zweno}(coeff_xᶠᵃᵃ , coeff_xᶜᵃᵃ , coeff_yᵃᶠᵃ , coeff_yᵃᶜᵃ , coeff_zᵃᵃᶠ , coeff_zᵃᵃᶜ ,
-                                                        smooth_xᶠᵃᵃ, smooth_xᶜᵃᵃ, smooth_yᵃᶠᵃ, smooth_yᵃᶜᵃ, smooth_zᵃᵃᶠ, smooth_zᵃᵃᶜ,
-                                                        C3₀, C3₁, C3₂)
+    return WENO5{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, zweno}(coeff_xᶠᵃᵃ , coeff_xᶜᵃᵃ , coeff_yᵃᶠᵃ , coeff_yᵃᶜᵃ , coeff_zᵃᵃᶠ , coeff_zᵃᵃᶜ ,
+                                                            smooth_xᶠᵃᵃ, smooth_xᶜᵃᵃ, smooth_yᵃᶠᵃ, smooth_yᵃᶜᵃ, smooth_zᵃᵃᶠ, smooth_zᵃᵃᶜ,
+                                                            Cβ₀ᴸ, Cβ₁ᴸ, Cβ₂ᴸ, Cβ₀ᴿ, Cβ₁ᴿ, Cβ₂ᴿ)
 end
 
 return_metrics(::LatitudeLongitudeGrid) = (:λᶠᵃᵃ, :λᶜᵃᵃ, :φᵃᶠᵃ, :φᵃᶜᵃ, :zᵃᵃᶠ, :zᵃᵃᶜ)
 return_metrics(::RectilinearGrid)       = (:xᶠᵃᵃ, :xᶜᵃᵃ, :yᵃᶠᵃ, :yᵃᶜᵃ, :zᵃᵃᶠ, :zᵃᵃᶜ)
 
 # Flavours of WENO
-const ZWENO                   = WENO5{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, true}
+const ZWENO                   = WENO5{<:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, <:Any, true}
 
-const WENOVectorInvariantVel{FT, XT, YT, ZT, XS, YS, ZS, VI, WF}  = 
-      WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, WF} where {FT, XT, YT, ZT, XS, YS, ZS, VI<:VelocityStencil, WF}
-const WENOVectorInvariantVort{FT, XT, YT, ZT, XS, YS, ZS, VI, WF} = 
-      WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, WF} where {FT, XT, YT, ZT, XS, YS, ZS, VI<:VorticityStencil, WF}
+const WENOVectorInvariantVel{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF}  = 
+      WENO5{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF} where {FT, XT, YT, ZT, XS, YS, ZS, SC, VI<:VelocityStencil, WF}
+const WENOVectorInvariantVort{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF} = 
+      WENO5{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF} where {FT, XT, YT, ZT, XS, YS, ZS, SC, VI<:VorticityStencil, WF}
 
-const WENOVectorInvariant = WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, WF} where {FT, XT, YT, ZT, XS, YS, ZS, VI<:SmoothnessStencil, WF}
+const WENOVectorInvariant = WENO5{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF} where {FT, XT, YT, ZT, XS, YS, ZS, SC, VI<:SmoothnessStencil, WF}
+
+const WENOParameterize = WENO5{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF} where {FT, XT, YT, ZT, XS, YS, ZS, SC<:Tuple, VI, WF}
 
 function Base.show(io::IO, a::WENO5{FT, RX, RY, RZ}) where {FT, RX, RY, RZ}
     print(io, "WENO5 advection scheme with: \n",
@@ -208,26 +224,16 @@ function Base.show(io::IO, a::WENO5{FT, RX, RY, RZ}) where {FT, RX, RY, RZ}
               "    └── Z $(RZ == Nothing ? "regular" : "stretched")" )
 end
 
-Adapt.adapt_structure(to, scheme::WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, WF}) where {FT, XT, YT, ZT, XS, YS, ZS, VI, WF} =
+Adapt.adapt_structure(to, scheme::WENO5{FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF}) where {FT, XT, YT, ZT, XS, YS, ZS, SC, VI, WF} =
      WENO5{FT, typeof(Adapt.adapt(to, scheme.coeff_xᶠᵃᵃ)),
                typeof(Adapt.adapt(to, scheme.coeff_yᵃᶠᵃ)),  
                typeof(Adapt.adapt(to, scheme.coeff_zᵃᵃᶠ)),
                typeof(Adapt.adapt(to, scheme.smooth_xᶠᵃᵃ)),
                typeof(Adapt.adapt(to, scheme.smooth_yᵃᶠᵃ)),  
-               typeof(Adapt.adapt(to, scheme.smooth_zᵃᵃᶠ)), VI, WF}(
-        Adapt.adapt(to, scheme.coeff_xᶠᵃᵃ),
-        Adapt.adapt(to, scheme.coeff_xᶜᵃᵃ),
-        Adapt.adapt(to, scheme.coeff_yᵃᶠᵃ),
-        Adapt.adapt(to, scheme.coeff_yᵃᶜᵃ),
-        Adapt.adapt(to, scheme.coeff_zᵃᵃᶠ),       
-        Adapt.adapt(to, scheme.coeff_zᵃᵃᶜ),
-        Adapt.adapt(to, scheme.smooth_xᶠᵃᵃ),
-        Adapt.adapt(to, scheme.smooth_xᶜᵃᵃ),
-        Adapt.adapt(to, scheme.smooth_yᵃᶠᵃ),
-        Adapt.adapt(to, scheme.smooth_yᵃᶜᵃ),
-        Adapt.adapt(to, scheme.smooth_zᵃᵃᶠ),       
-        Adapt.adapt(to, scheme.smooth_zᵃᵃᶜ), scheme.C3₀, scheme.C3₁, scheme.C3₂)
-
+               typeof(Adapt.adapt(to, scheme.smooth_zᵃᵃᶠ)),  
+               typeof(Adapt.adapt(to, scheme.Cβ₀ᴸ)), VI, WF}(
+               ntuple(j->adapt(to, getfield(scheme, fieldnames(WENO5)[j])), length(fieldnames(WENO5)))...)
+        
 @inline boundary_buffer(::WENO5) = 2
 
 @inline symmetric_interpolate_xᶠᵃᵃ(i, j, k, grid, ::WENO5, c) = symmetric_interpolate_xᶠᵃᵃ(i, j, k, grid, centered_fourth_order, c)
@@ -301,13 +307,13 @@ Adapt.adapt_structure(to, scheme::WENO5{FT, XT, YT, ZT, XS, YS, ZS, VI, WF}) whe
 ##### Jiang & Shu (1996) WENO smoothness indicators. See also Equation 2.63 in Shu (1998)
 #####
 
-@inline left_biased_β₀(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * (3ψ[1] - 4ψ[2] +  ψ[3])^two_32
-@inline left_biased_β₁(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1]         -  ψ[3])^two_32
-@inline left_biased_β₂(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1] - 4ψ[2] + 3ψ[3])^two_32
+@inline left_biased_β₀_original(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * (3ψ[1] - 4ψ[2] +  ψ[3])^two_32
+@inline left_biased_β₁_original(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1]         -  ψ[3])^two_32
+@inline left_biased_β₂_original(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1] - 4ψ[2] + 3ψ[3])^two_32
 
-@inline right_biased_β₀(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1] - 4ψ[2] + 3ψ[3])^two_32
-@inline right_biased_β₁(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1]         -  ψ[3])^two_32
-@inline right_biased_β₂(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * (3ψ[1] - 4ψ[2] +  ψ[3])^two_32
+@inline right_biased_β₀_original(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1] - 4ψ[2] + 3ψ[3])^two_32
+@inline right_biased_β₁_original(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * ( ψ[1]         -  ψ[3])^two_32
+@inline right_biased_β₂_original(FT, ψ, ::Type{Nothing}, scheme, args...) = @inbounds FT(13/12) * (ψ[1] - 2ψ[2] + ψ[3])^two_32 + FT(1/4) * (3ψ[1] - 4ψ[2] +  ψ[3])^two_32
 
 #####
 ##### Stretched smoothness indicators gathered from precomputed values.
@@ -344,13 +350,13 @@ end
     return result
 end
 
-@inline left_biased_β₀(FT, ψ, T, scheme, args...) = biased_left_β(ψ, scheme, 0, args...) 
-@inline left_biased_β₁(FT, ψ, T, scheme, args...) = biased_left_β(ψ, scheme, 1, args...) 
-@inline left_biased_β₂(FT, ψ, T, scheme, args...) = biased_left_β(ψ, scheme, 2, args...) 
+@inline left_biased_β₀_original(FT, ψ, T, scheme, args...) = biased_left_β(ψ, scheme, 0, args...) 
+@inline left_biased_β₁_original(FT, ψ, T, scheme, args...) = biased_left_β(ψ, scheme, 1, args...) 
+@inline left_biased_β₂_original(FT, ψ, T, scheme, args...) = biased_left_β(ψ, scheme, 2, args...) 
 
-@inline right_biased_β₀(FT, ψ, T, scheme, args...) = biased_right_β(ψ, scheme, 2, args...) 
-@inline right_biased_β₁(FT, ψ, T, scheme, args...) = biased_right_β(ψ, scheme, 1, args...) 
-@inline right_biased_β₂(FT, ψ, T, scheme, args...) = biased_right_β(ψ, scheme, 0, args...) 
+@inline right_biased_β₀_original(FT, ψ, T, scheme, args...) = biased_right_β(ψ, scheme, 2, args...) 
+@inline right_biased_β₁_original(FT, ψ, T, scheme, args...) = biased_right_β(ψ, scheme, 1, args...) 
+@inline right_biased_β₂_original(FT, ψ, T, scheme, args...) = biased_right_β(ψ, scheme, 0, args...) 
 
 #####
 ##### VectorInvariant reconstruction (based on JS or Z) (z-direction Val{3} is different from x- and y-directions)
@@ -360,7 +366,39 @@ end
 ##### JS-WENO-5 reconstruction
 #####
 
-for (side, coeffs) in zip([:left, :right], ([:C3₀, :C3₁, :C3₂], [:C3₂, :C3₁, :C3₀]))
+for (dir, sup) in zip([:left, :right], [:ᴸ, :ᴿ]), stencil in [:β₀, :β₁, :β₂]
+    biased_β = Symbol(dir, :_biased_, stencil, :_parameterization)
+    coeffs   = Symbol(:C, stencil, sup)
+
+    @eval begin
+        @inline function $biased_β(FT, ψ, ::Type{Nothing}, scheme, args...)
+            β = 0
+            @unroll for i in 1:3
+                β += scheme.$coeffs[i]   * ψ[i] * ψ[i]
+                β += scheme.$coeffs[i+3] * ψ[i] * dagger(ψ)[i]   
+            end
+            return β
+        end
+    end
+end
+
+@inline left_biased_β₀(FT, ψ, T, scheme, args...) = left_biased_β₀_original(FT, ψ, T, scheme, args...)
+@inline left_biased_β₁(FT, ψ, T, scheme, args...) = left_biased_β₁_original(FT, ψ, T, scheme, args...)
+@inline left_biased_β₂(FT, ψ, T, scheme, args...) = left_biased_β₂_original(FT, ψ, T, scheme, args...)
+
+@inline right_biased_β₀(FT, ψ, T, scheme, args...) = right_biased_β₀_original(FT, ψ, T, scheme, args...)
+@inline right_biased_β₁(FT, ψ, T, scheme, args...) = right_biased_β₁_original(FT, ψ, T, scheme, args...)
+@inline right_biased_β₂(FT, ψ, T, scheme, args...) = right_biased_β₂_original(FT, ψ, T, scheme, args...)
+
+@inline left_biased_β₀(FT, ψ, T, scheme::WENOParameterize, args...) = left_biased_β₀_parameterization(FT, ψ, T, scheme, args...)
+@inline left_biased_β₁(FT, ψ, T, scheme::WENOParameterize, args...) = left_biased_β₁_parameterization(FT, ψ, T, scheme, args...)
+@inline left_biased_β₂(FT, ψ, T, scheme::WENOParameterize, args...) = left_biased_β₂_parameterization(FT, ψ, T, scheme, args...)
+
+@inline right_biased_β₀(FT, ψ, T, scheme::WENOParameterize, args...) = right_biased_β₀_parameterization(FT, ψ, T, scheme, args...)
+@inline right_biased_β₁(FT, ψ, T, scheme::WENOParameterize, args...) = right_biased_β₁_parameterization(FT, ψ, T, scheme, args...)
+@inline right_biased_β₂(FT, ψ, T, scheme::WENOParameterize, args...) = right_biased_β₂_parameterization(FT, ψ, T, scheme, args...)
+
+for (side, coeffs) in zip([:left, :right], ([3/10, 3/5, 1/10], [1/10, 3/5, 3/10]))
     biased_weno5_weights = Symbol(side, :_biased_weno5_weights)
     biased_β₀ = Symbol(side, :_biased_β₀)
     biased_β₁ = Symbol(side, :_biased_β₁)
@@ -374,19 +412,20 @@ for (side, coeffs) in zip([:left, :right], ([:C3₀, :C3₁, :C3₂], [:C3₂, :
     @eval begin
         @inline function $biased_weno5_weights(FT, ψₜ, T, scheme, dir, idx, loc, args...)
             ψ₂, ψ₁, ψ₀ = ψₜ 
+            
             β₀ = $biased_β₀(FT, ψ₀, T, scheme, dir, idx, loc)
             β₁ = $biased_β₁(FT, ψ₁, T, scheme, dir, idx, loc)
             β₂ = $biased_β₂(FT, ψ₂, T, scheme, dir, idx, loc)
             
             if scheme isa ZWENO
                 τ₅ = abs(β₂ - β₀)
-                α₀ = scheme.$(coeffs[1]) * (1 + (τ₅ / (β₀ + FT(ε)))^ƞ) 
-                α₁ = scheme.$(coeffs[2]) * (1 + (τ₅ / (β₁ + FT(ε)))^ƞ) 
-                α₂ = scheme.$(coeffs[3]) * (1 + (τ₅ / (β₂ + FT(ε)))^ƞ) 
+                α₀ = FT($(coeffs[1])) * (1 + (τ₅ / (β₀ + FT(ε)))^ƞ) 
+                α₁ = FT($(coeffs[2])) * (1 + (τ₅ / (β₁ + FT(ε)))^ƞ) 
+                α₂ = FT($(coeffs[3])) * (1 + (τ₅ / (β₂ + FT(ε)))^ƞ) 
             else
-                α₀ = scheme.$(coeffs[1]) / (β₀ + FT(ε))^ƞ
-                α₁ = scheme.$(coeffs[2]) / (β₁ + FT(ε))^ƞ
-                α₂ = scheme.$(coeffs[3]) / (β₂ + FT(ε))^ƞ
+                α₀ = FT($(coeffs[1])) / (β₀ + FT(ε))^ƞ
+                α₁ = FT($(coeffs[2])) / (β₁ + FT(ε))^ƞ
+                α₂ = FT($(coeffs[3])) / (β₂ + FT(ε))^ƞ
             end
         
             Σα = α₀ + α₁ + α₂
@@ -417,13 +456,13 @@ for (side, coeffs) in zip([:left, :right], ([:C3₀, :C3₁, :C3₂], [:C3₂, :
         
             if scheme isa ZWENO
                 τ₅ = abs(β₂ - β₀)
-                α₀ = scheme.$(coeffs[1]) * (1 + (τ₅ / (β₀ + FT(ε)))^ƞ) 
-                α₁ = scheme.$(coeffs[2]) * (1 + (τ₅ / (β₁ + FT(ε)))^ƞ) 
-                α₂ = scheme.$(coeffs[3]) * (1 + (τ₅ / (β₂ + FT(ε)))^ƞ) 
+                α₀ = FT($(coeffs[1])) * (1 + (τ₅ / (β₀ + FT(ε)))^ƞ) 
+                α₁ = FT($(coeffs[2])) * (1 + (τ₅ / (β₁ + FT(ε)))^ƞ) 
+                α₂ = FT($(coeffs[3])) * (1 + (τ₅ / (β₂ + FT(ε)))^ƞ) 
             else    
-                α₀ = scheme.$(coeffs[1]) / (β₀ + FT(ε))^ƞ
-                α₁ = scheme.$(coeffs[2]) / (β₁ + FT(ε))^ƞ
-                α₂ = scheme.$(coeffs[3]) / (β₂ + FT(ε))^ƞ
+                α₀ = FT($(coeffs[1])) / (β₀ + FT(ε))^ƞ
+                α₁ = FT($(coeffs[2])) / (β₁ + FT(ε))^ƞ
+                α₂ = FT($(coeffs[3])) / (β₂ + FT(ε))^ƞ
             end
                 
             Σα = α₀ + α₁ + α₂
@@ -445,13 +484,13 @@ for (side, coeffs) in zip([:left, :right], ([:C3₀, :C3₁, :C3₂], [:C3₂, :
         
             if scheme isa ZWENO
                 τ₅ = abs(β₂ - β₀)
-                α₀ = scheme.$(coeffs[1]) * (1 + (τ₅ / (β₀ + FT(ε)))^ƞ) 
-                α₁ = scheme.$(coeffs[2]) * (1 + (τ₅ / (β₁ + FT(ε)))^ƞ) 
-                α₂ = scheme.$(coeffs[3]) * (1 + (τ₅ / (β₂ + FT(ε)))^ƞ) 
+                α₀ = FT($(coeffs[1])) * (1 + (τ₅ / (β₀ + FT(ε)))^ƞ) 
+                α₁ = FT($(coeffs[2])) * (1 + (τ₅ / (β₁ + FT(ε)))^ƞ) 
+                α₂ = FT($(coeffs[3])) * (1 + (τ₅ / (β₂ + FT(ε)))^ƞ) 
             else    
-                α₀ = scheme.$(coeffs[1]) / (β₀ + FT(ε))^ƞ
-                α₁ = scheme.$(coeffs[2]) / (β₁ + FT(ε))^ƞ
-                α₂ = scheme.$(coeffs[3]) / (β₂ + FT(ε))^ƞ
+                α₀ = FT($(coeffs[1])) / (β₀ + FT(ε))^ƞ
+                α₁ = FT($(coeffs[2])) / (β₁ + FT(ε))^ƞ
+                α₂ = FT($(coeffs[3])) / (β₂ + FT(ε))^ƞ
             end
                 
             Σα = α₀ + α₁ + α₂
