@@ -3,25 +3,24 @@ using Oceananigans.BuoyancyModels: top_buoyancy_flux, z_dot_g_b, buoyancy_pertur
 using Oceananigans.Operators
 using KernelAbstractions.Extras.LoopInfo: @unroll
 
-struct MassFluxVerticalDiffusivity{TD, E, A1, A2, RA, B1, B2, C} <: AbstractScalarDiffusivity{TD, VerticalFormulation}
+struct MassFluxVerticalDiffusivity{TD, E, A1, A2, B1, B2, C, G} <: AbstractScalarDiffusivity{TD, VerticalFormulation}
     εg :: E
     a₁ :: A1
     α  :: A2
-    Rᵅ :: RA
     β₁ :: B1
     β₂ :: B2
     Cₘ :: C 
-
-    function MassFluxVerticalDiffusivity{TD}(εg::E, a₁::A1, α::A2, Rᵅ::RA, 
-                                             β₁::B1, β₂::B2, Cₘ::C) where {TD, E, A1, A2, RA, B1, B2, C}
-        return new{TD, E, A1, A2, RA, B1, B2, C}(εg, a₁, α, Rᵅ::RA, β₁, β₂, Cₘ)
-    end
+    Cg :: G
 end
+
+MassFluxVerticalDiffusivity{TD}(εg::E, a₁::A1, α::A2, β₁::B1, β₂::B2, Cₘ::C, Cg::G) where {TD, E, A1, A2, B1, B2, C, G} =
+        MassFluxVerticalDiffusivity{TD, E, A1, A2, B1, B2, C, G}(εg, a₁, α, β₁, β₂, Cₘ, Cg)
 
 const MF = MassFluxVerticalDiffusivity
 
-function MassFluxVerticalDiffusivity(; εg=0.1, a₁=2.0/3.0, α=0.2, Rᵅ=2.0, β₁=0.9, β₂=0.9, Cₘ=0.065) where TD
-    return MassFluxVerticalDiffusivity{ExplicitTimeDiscretization}(εg, a₁, α, Rᵅ, β₁, β₂, Cₘ)
+function MassFluxVerticalDiffusivity(time_discretization::TD=ExplicitTimeDiscretization();
+                                    εg=0.1, a₁=2.0/3.0, α=0.2, β₁=0.9, β₂=0.9, Cₘ=0.065, Cg=9.80665) where TD
+    return MassFluxVerticalDiffusivity{TD}(εg, a₁, α, β₁, β₂, Cₘ, Cg)
 end
 
 #####
@@ -62,26 +61,27 @@ plume properties
 @kernel function compute_plume_properties!(wₚ, aₚ, εₚ, ψₚ, grid, closure, buoyancy, tracers, tracer_bcs)
     i, j = @index(Global, NTuple)
 
-    g  = buoyancy.model.gravitational_acceleration
+    closure_ij = getclosure(i, j, closure)
+    
     Qᵇ = top_buoyancy_flux(i, j, grid, buoyancy, tracer_bcs, clock, tracers)
     w★ = abs(Qᵇ)^(1/3) 
     u★ = 0.0
     uₛ  = min(1.0, max(1e-5, 2/3*(w★ + u★)))
-    aₚ₀ = ifelse(Qᵇ > 0, closure.Cₘ * w★ / 2 * 3 / uₛ, 0.0)
+    aₚ₀ = ifelse(Qᵇ > 0, closure_ij.Cₘ * w★ / 2 * 3 / uₛ, 0.0)
     wₚ² = 0
 
     ## Calculating plume's vertical velocity
     wₚ[i, j, grid.Nz + 1] = 0
     @unroll for k in grid.Nz : -1 : 1
         bₚ    = buoyancy_perturbation(i, j, k, grid, buoyancy.model, ψₚ)
-        bprod = buoyancy_production(i, j, k, grid, closure, g, buoyancy, tracers, bₚ)
-        cres  = cnvctive_resistance(i, j, k, grid, closure, g, bₚ, εₚ)
+        bprod = buoyancy_production(i, j, k, grid, closure_ij, buoyancy, tracers, bₚ)
+        cres  = cnvctive_resistance(i, j, k, grid, closure_ij, bₚ, εₚ)
 
         bprod *= Δzᶜᶜᶜ(i, j, k, grid)
         cres  *= Δzᶜᶜᶜ(i, j, k, grid)
 
-        cₖ₊₁ = (closure.α + 0.5) - cres / 2 
-        cₖ   = (closure.α + 0.5) + cres / 2 
+        cₖ₊₁ = (closure_ij.α + 0.5) - cres / 2 
+        cₖ   = (closure_ij.α + 0.5) + cres / 2 
 
         @show bprod, cₖ₊₁, cₖ, bₚ, (bprod + wₚ² * cₖ₊₁) / cₖ, wₚ²
         # updating wₚ²
@@ -97,8 +97,8 @@ plume properties
         if wᵢ > 0
             L = - ∂zᶜᶜᶜ(i, j, k, grid, wₚ) / wᵢ
 
-            εₐₚ =   closure.β₁ * max(0, L)
-            δₐₚ = - closure.β₂ * min(0, L)
+            εₐₚ =   closure_ij.β₁ * max(0, L)
+            δₐₚ = - closure_ij.β₂ * min(0, L)
 
             cₖ₊₁ = 1 + (L + εₐₚ - δₐₚ) / 2 * Δzᶜᶜᶜ(i, j, k, grid)
             cₖ   = 1 - (L + εₐₚ - δₐₚ) / 2 * Δzᶜᶜᶜ(i, j, k, grid)
@@ -113,7 +113,7 @@ plume properties
     ## Calculating entrainment coefficient
     @unroll for k in grid.Nz : -1 : 1
         wᵢ = ℑzᵃᵃᶜ(i, j, k, grid, wₚ)
-        εₚ[i, j, k] = wᵢ > 0 ? abs(∂zᶜᶜᶜ(i, j, k, grid, wₚ)) / wᵢ + closure.εg : 0
+        εₚ[i, j, k] = wᵢ > 0 ? abs(∂zᶜᶜᶜ(i, j, k, grid, wₚ)) / wᵢ + closure_ij.εg : 0
     end
 
     ## Calculating plume's properties
@@ -159,7 +159,7 @@ function calculate_diffusivities!(diffusivities, closure::FlavorOfMF, model)
     return nothing
 end
 
-function DiffusivityFields(grid, tracer_names, user_bcs, ::MF)
+function DiffusivityFields(grid, tracer_names, user_bcs, ::FlavorOfMF)
     aₚ = ZFaceField(grid)
     wₚ = ZFaceField(grid)
     εₚ = CenterField(grid)
@@ -182,20 +182,20 @@ Buoyancy production of plume's vertical velocity
 Bₚ = a₁ g (ρₚ - ρₑ) / ρₑ 
 ```
 """
-@inline function buoyancy_production(i, j, k, grid, closure, g, buoyancy, tracers, bₚ) 
+@inline function buoyancy_production(i, j, k, grid, closure, buoyancy, tracers, bₚ) 
     bₑ = buoyancy_perturbation(i, j, k, grid, buoyancy.model, tracers)
-    return closure.a₁ * g * (bₚ - bₑ) / (bₑ + g)
+    return closure.a₁ * closure.Cg * (bₚ - bₑ) / (bₑ + closure.Cg)
 end
 
 """
 Resistance to downwards convection
 
 ```math
-Cᵣ = Rᵅ g (ρₚ / pₕ) 
+Cᵣ = α g (ρₚ / pₕ) + εₚ
 ```
 """
-@inline cnvctive_resistance(i, j, k, grid, closure, g, bₚ, εₚ) =  
-        - closure.Rᵅ * (bₚ + g) / znode(Center(), Center(), Center(), i, j, k, grid) + εₚ[i, j, k]
+@inline cnvctive_resistance(i, j, k, grid, closure, bₚ, εₚ) =  
+        - closure.α * (bₚ + closure.Cg) / znode(Center(), Center(), Center(), i, j, k, grid) + εₚ[i, j, k]
 
 ####
 #### Explicit time discretization fluxes

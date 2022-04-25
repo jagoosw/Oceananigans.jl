@@ -28,7 +28,6 @@ using SparseArrays: fkeep!
 @inline arch_sparse_matrix(::CPU, A::SparseMatrixCSC)   = A
 @inline arch_sparse_matrix(::GPU, A::CuSparseMatrixCSC) = A
 
-
 # We need to update the diagonal element each time the time step changes!!
 function update_diag!(constr, arch, problem_size, diag, Δt)   
     M = prod(problem_size)
