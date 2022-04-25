@@ -179,11 +179,7 @@ function WENO5(coeffs = nothing, FT = Float64;
     YS = typeof(smooth_yᵃᶠᵃ)
     ZS = typeof(smooth_zᵃᵃᶠ)
 
-    if coeffs isa Nothing
-        C3₀, C3₁, C3₂ = FT.((3/10, 3/5, 1/10))
-    else
-        C3₀, C3₁, C3₂ = FT.(coeffs)
-    end
+    C3₀, C3₁, C3₂ = FT.((3/10, 3/5, 1/10))
 
     VI = typeof(vector_invariant)
 
