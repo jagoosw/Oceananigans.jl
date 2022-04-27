@@ -64,6 +64,18 @@ SmallSlopeIsopycnalTensor(; minimum_bz = 0) = SmallSlopeIsopycnalTensor(minimum_
     return ifelse(bz == 0, zero(FT), slope_x)
 end
 
+#=
+@inline function isopycnal_rotation_tensor_xz_fcf(i, j, k, grid::AbstractGrid{FT}, buoyancy, tracers, slope_model::SmallSlopeIsopycnalTensor) where FT
+    bx = ∂x_b(i, j, k, grid, buoyancy, tracers)
+    bz = ∂zᶠᶜᶜ(i, j, k, grid, ℑxzᶠᵃᶠ, buoyancy_perturbation, buoyancy.model, tracers)
+    bz = max(bz, slope_model.minimum_bz)
+    
+    slope_x = - bx / bz
+    
+    return ifelse(bz == 0, zero(FT), slope_x)
+end
+=#
+
 @inline function isopycnal_rotation_tensor_xz_ccf(i, j, k, grid::AbstractGrid{FT}, buoyancy, tracers, slope_model::SmallSlopeIsopycnalTensor) where FT
     bx = ∂xᶜᶜᶠ(i, j, k, grid, ℑxzᶠᵃᶠ, buoyancy_perturbation, buoyancy.model, tracers)
     bz = ∂z_b(i, j, k, grid, buoyancy, tracers)

@@ -18,7 +18,6 @@ const ISSDVector = AbstractVector{<:ISSD}
 const FlavorOfISSD = Union{ISSD, ISSDVector}
 const issd_coefficient_loc = (Center, Center, Center)
 
-
 """
     IsopycnalSkewSymmetricDiffusivity([FT=Float64;]
                                       κ_skew = 0,
@@ -55,6 +54,20 @@ function with_tracers(tracers, closure_vector::ISSDVector)
 
     return arch_array(arch, closure_vector)
 end
+
+function DiffusivityFields(grid, tracer_names, bcs, closure::FlavorOfISSD)
+    ψx = Field{Face, Center, Face}(grid)
+    ψy = Field{Face, Face, Center}(grid)
+
+    u★ = ∂z(ψx)
+    v★ = ∂z(ψy)
+    w★ = - ∂x(ψx) - ∂y(ψy)
+
+    return (; ψx, ψy, u★, v★, w★)
+                      
+#function calculate_diffusivities!(diffusivities, closure::FlavorOfRBVD, model)
+
+ 
 
 #####
 ##### Tapering
