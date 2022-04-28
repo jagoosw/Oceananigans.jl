@@ -3,25 +3,42 @@ using Oceananigans.BuoyancyModels: top_buoyancy_flux, z_dot_g_b, buoyancy_pertur
 using Oceananigans.Operators
 using KernelAbstractions.Extras.LoopInfo: @unroll
 
-struct MassFluxVerticalDiffusivity{TD, E, A1, A2, B1, B2, C, G} <: AbstractScalarDiffusivity{TD, VerticalFormulation}
-    εg :: E
-    a₁ :: A1
-    α  :: A2
-    β₁ :: B1
-    β₂ :: B2
-    Cₘ :: C 
-    Cg :: G
+struct MassFluxVerticalDiffusivity{TD, FT} <: AbstractScalarDiffusivity{TD, VerticalFormulation}
+    εg :: FT
+    a₁ :: FT
+    α  :: FT
+    β₁ :: FT
+    β₂ :: FT
+    Cₘ :: FT 
+    Cg :: FT
 end
 
-MassFluxVerticalDiffusivity{TD}(εg::E, a₁::A1, α::A2, β₁::B1, β₂::B2, Cₘ::C, Cg::G) where {TD, E, A1, A2, B1, B2, C, G} =
-        MassFluxVerticalDiffusivity{TD, E, A1, A2, B1, B2, C, G}(εg, a₁, α, β₁, β₂, Cₘ, Cg)
+MassFluxVerticalDiffusivity{TD}(εg::FT, a₁::FT, α::FT, β₁::FT, β₂::FT, Cₘ::FT, Cg::FT) where {TD, FT} =
+        MassFluxVerticalDiffusivity{TD, FT}(εg, a₁, α, β₁, β₂, Cₘ, Cg)
 
 const MF = MassFluxVerticalDiffusivity
 
-function MassFluxVerticalDiffusivity(time_discretization::TD=ExplicitTimeDiscretization();
-                                    εg=0.1, a₁=2.0/3.0, α=0.2, β₁=0.9, β₂=0.9, Cₘ=0.065, Cg=9.80665) where TD
+function MassFluxVerticalDiffusivity(time_discretization=ExplicitTimeDiscretization(), 
+                                    FT = Float64;
+                                    εg=0.1,
+                                    a₁=0.667, 
+                                    α=0.2, 
+                                    β₁=0.9, 
+                                    β₂=0.9, 
+                                    Cₘ=0.065, 
+                                    Cg=9.80665) 
+
+    TD = typeof(time_discretization)
+
     return MassFluxVerticalDiffusivity{TD}(εg, a₁, α, β₁, β₂, Cₘ, Cg)
 end
+
+MassFluxVerticalDiffusivity(FT::DataType; kw...) =
+    MassFluxVerticalDiffusivity(ExplicitTimeDiscretization(), FT; kw...)
+
+# To change!
+viscosity(::MF{TD, FT}, args...) where {TD, FT}   = zero(FT)
+diffusivity(::MF{TD, FT}, args...) where {TD, FT} = zero(FT)
 
 #####
 ##### Diffusivity field utilities
@@ -83,7 +100,6 @@ plume properties
         cₖ₊₁ = (closure_ij.α + 0.5) - cres / 2 
         cₖ   = (closure_ij.α + 0.5) + cres / 2 
 
-        @show bprod, cₖ₊₁, cₖ, bₚ, (bprod + wₚ² * cₖ₊₁) / cₖ, wₚ²
         # updating wₚ²
         wₚ²  = max((bprod + wₚ² * cₖ₊₁) / cₖ, 0.0)
         wₚ[i, j, k] = sqrt( wₚ² )
