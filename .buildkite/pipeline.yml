@@ -499,6 +499,7 @@ steps:
       JULIA_DEPOT_PATH: "foo"
       TEST_GROUP: "foo"
     commands:
+      - "pwd"
       - "hostname"
       - "echo hi"
     agents:
