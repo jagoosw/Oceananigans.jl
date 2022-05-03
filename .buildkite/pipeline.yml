@@ -501,7 +501,7 @@ steps:
     commands:
       - "pwd"
       - "env"
-      - "which srun"
+      - "srun -p sched_system_penguin --time=12:00:00 --gres=gpu:8 --pty /opt/rocm-4.1.1/bin/rocm-smi"
       - "hostname"
       - "echo hi"
     agents:
