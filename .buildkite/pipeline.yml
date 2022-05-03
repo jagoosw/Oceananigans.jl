@@ -501,6 +501,7 @@ steps:
     commands:
       - "pwd"
       - "env"
+      - "which srun"
       - "hostname"
       - "echo hi"
     agents:
