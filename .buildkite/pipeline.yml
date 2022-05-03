@@ -491,6 +491,23 @@ steps:
     depends_on: "init_cpu"
 
 #####
+##### AMD experimenting with buildkite
+#####
+
+  - label: "AMD GPU"
+    env:
+      JULIA_DEPOT_PATH: "foo"
+      TEST_GROUP: "foo"
+    commands:
+      - "hostname"
+      - "echo hi"
+    agents:
+      queue: Oceananigans
+      architecture: AMDGPU
+####    depends_on: "init_gpu" REMOVE FOR NOW
+
+
+#####
 ##### Scripts
 #####
 
