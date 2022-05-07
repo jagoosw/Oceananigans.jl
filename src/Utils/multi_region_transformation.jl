@@ -73,22 +73,31 @@ end
 @inline getregion(nt::NamedTuple, i)   = NamedTuple{keys(nt)}(_getregion(Tuple(nt), i))
 @inline _getregion(nt::NamedTuple, i)  = NamedTuple{keys(nt)}(getregion(Tuple(nt), i))
 
-@inline isregional(a)                   = false
-@inline isregional(::MultiRegionObject) = true
-
-@inline isregional(t::Tuple{}) = false
-@inline isregional(nt::NT) where NT<:NamedTuple{<:Any, Tuple{Tuple{}}} = false
-for func in [:isregional, :devices, :switch_device!]
-    @eval begin
-        @inline $func(t::Union{Tuple, NamedTuple}) = $func(first(t))
-    end
-end
-
 @inline devices(mo::MultiRegionObject) = mo.devices
 
 Base.getindex(mo::MultiRegionObject, i, args...) = Base.getindex(mo.regions, i, args...)
 Base.length(mo::MultiRegionObject)               = Base.length(mo.regions)
 
+#####
+##### isregional
+#####
+
+@inline isregional(a) = false
+
+# Empty things
+@inline isregional(::Tuple{}) = false
+@inline isregional(::NT) where NT <: NamedTuple{<:Any, Tuple{Tuple{}}} = false
+
+# Assuming "heterogeneous" tuples and named tuples (either all regional, or not)
+for func in (:isregional, :devices, :switch_device!)
+    @eval begin
+        @inline $func(t::Union{Tuple, NamedTuple}) = $func(first(t))
+    end
+end
+
+@inline isregional(::MultiRegionObject) = true # duh
+
+# TODO: perhaps make this less ambitious
 # For non-returning functions -> can we make it NON BLOCKING? This seems to be synchronous!
 @inline function apply_regionally!(func!, args...; kwargs...)
     mra = isnothing(findfirst(isregional, args)) ? nothing : args[findfirst(isregional, args)]
@@ -145,10 +154,15 @@ end
 @inline sync_device!(dev)        = nothing
 
 """
-macro `@apply_regionally` to distribute locally the function calls
+    @apply_regionally expr
 
-calls `compute_regionally` in case of a returning value and `apply_regionally!` 
-in case of no return
+Either (i) distribute `expr` over a `MultiRegionGrid` or (ii) evaluate
+as usual if no input to expr is a `MultiRegionObject`.
+
+If `expr` is an assignment, the assigned value will be assembled into
+a `MultiRegionObject` with `construct_regionally`.
+
+If `expr` is a function call, we use `apply_regionally!`.
 """
 macro apply_regionally(expr)
     if expr.head == :call
