@@ -1,7 +1,6 @@
 using Statistics
 using JLD2
 using Printf
-using Plots
 using Oceananigans
 using Oceananigans.Units
 
@@ -111,8 +110,8 @@ z_faces = file_z_faces["z_faces"][3:end]
 
 grid = ImmersedBoundaryGrid(underlying_grid, GridFittedBottom(bathymetry))
 
-underlying_mrg = MultiRegionGrid(underlying_grid, partition = XPartition(2), devices = (1, 3))
-mrg            = MultiRegionGrid(grid,            partition = XPartition(2), devices = (1, 3))
+underlying_mrg = MultiRegionGrid(underlying_grid, partition = XPartition(2), devices = (0, 3)) # underlying_grid # 
+mrg            = MultiRegionGrid(grid,            partition = XPartition(2), devices = (0, 3)) # grid            # 
 
 τˣ = multi_region_object_from_array(- τˣ, mrg)
 τʸ = multi_region_object_from_array(- τʸ, mrg)
@@ -271,57 +270,56 @@ fill_halo_regions!(S)
 ##### Simulation setup
 #####
 
-Δt = 6minutes  # for initialization, then we can go up to 6 minutes?
+Δt = 6minutes # for initialization, then we can go up to 6 minutes?
 
-simulation = Simulation(model, Δt = Δt, stop_time = Nyears*years)
+# simulation = Simulation(model, Δt = Δt, stop_time = Nyears*years)
 
-start_time = [time_ns()]
+# start_time = [time_ns()]
 
-using Oceananigans.Utils 
-using Oceananigans.MultiRegion: reconstruct_global_field
+# using Oceananigans.Utils 
+# using Oceananigans.MultiRegion: reconstruct_global_field
 
-function progress(sim)
-    wall_time = (time_ns() - start_time[1]) * 1e-9
+# function progress(sim)
+#     wall_time = (time_ns() - start_time[1]) * 1e-9
 
-    u = sim.model.velocities.u
-    η = sim.model.free_surface.η
+#     u = sim.model.velocities.u
+#     η = sim.model.free_surface.η
 
-    @info @sprintf("Time: % 12s, iteration: %d, wall time: %s", 
-                    #"Time: % 12s, iteration: %d, max(|u|): %.2e ms⁻¹, max(|η|): %.2e m, wall time: %s", 
-                    prettytime(sim.model.clock.time),
-                    sim.model.clock.iteration, #maximum(abs, u), maximum(abs, η),
-                    prettytime(wall_time))
+#     @info @sprintf("Time: % 12s, iteration: %d, max(|u|): %.2e ms⁻¹, wall time: %s", 
+#                     prettytime(sim.model.clock.time),
+#                     sim.model.clock.iteration, maximum(abs, u),
+#                     prettytime(wall_time))
 
-    start_time[1] = time_ns()
+#     start_time[1] = time_ns()
 
-    return nothing
-end
+#     return nothing
+# end
 
-simulation.callbacks[:progress] = Callback(progress, IterationInterval(10))
+# simulation.callbacks[:progress] = Callback(progress, IterationInterval(10))
 
-u, v, w = model.velocities
-T = model.tracers.T
-S = model.tracers.S
-η = model.free_surface.η
+# u, v, w = model.velocities
+# T = model.tracers.T
+# S = model.tracers.S
+# η = model.free_surface.η
 
-output_fields = (; u, v, T, S, η)
-save_interval = 5days
+# output_fields = (; u, v, T, S, η)
+# save_interval = 5days
 
-simulation.output_writers[:checkpointer] = Checkpointer(model,
-                                                        schedule = TimeInterval(1year),
-                                                        prefix = output_prefix * "_checkpoint",
-                                                        overwrite_existing = true)
+# simulation.output_writers[:checkpointer] = Checkpointer(model,
+#                                                         schedule = TimeInterval(save_interval),
+#                                                         prefix = output_prefix * "_checkpoint",
+#                                                         overwrite_existing = true)
 
-# Let's goo!
-@info "Running with Δt = $(prettytime(simulation.Δt))"
+# # Let's goo!
+# @info "Running with Δt = $(prettytime(simulation.Δt))"
 
-run!(simulation, pickup = pickup_file)
+# run!(simulation, pickup = pickup_file)
 
-@info """
+# @info """
 
-    Simulation took $(prettytime(simulation.run_wall_time))
-    Free surface: $(typeof(model.free_surface).name.wrapper)
-    Time step: $(prettytime(Δt))
-"""
+#     Simulation took $(prettytime(simulation.run_wall_time))
+#     Free surface: $(typeof(model.free_surface).name.wrapper)
+#     Time step: $(prettytime(Δt))
+# """
 
 

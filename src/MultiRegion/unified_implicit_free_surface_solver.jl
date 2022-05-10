@@ -78,6 +78,7 @@ function compute_regional_rhs!(rhs, grid, g, Δt, ∫ᶻQ, η, region, partition
 		            dependencies = device_event(arch))
 
     wait(device(arch), event)
+    
     return nothing
 end
 
@@ -104,8 +105,6 @@ function solve!(η, implicit_free_surface_solver::UnifiedImplicitFreeSurfaceSolv
     
     @apply_regionally redistribute_lhs!(η, sol, arch, grid, Iterate(1:length(grid)), grid.partition)
 
-    fill_halo_regions!(η)
-
     return nothing
 end
 
@@ -115,6 +114,8 @@ function redistribute_lhs!(η, sol, arch, grid, region, partition)
 		            dependencies = device_event(arch))
 
     wait(device(arch), event)
+
+    return nothing
 end
 
 # linearized right hand side

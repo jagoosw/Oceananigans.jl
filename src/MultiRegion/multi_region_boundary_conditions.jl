@@ -63,11 +63,13 @@ function fill_halo_regions!(c::MultiRegionObject, bcs, loc, mrg::MultiRegionGrid
     arch = architecture(mrg)
 
     halo_tuple = construct_regionally(permute_boundary_conditions, bcs)
-    
+
+    apply_regionally!(fill_boundary_buffers!, buffers, c, arch, mrg)
+
     for task = 1:3
         barrier = device_event(arch)
         apply_regionally!(fill_halo_event!, task, halo_tuple, 
-                          c, loc, arch, barrier, mrg, Reference(c.regions), Reference(buffers.regions), 
+                          c, loc, arch, barrier, mrg, Reference(buffers.regions), 
                           args...; kwargs...)
     end
 
@@ -80,27 +82,47 @@ end
     
 ## Fill communicating boundary condition halos
 for (lside, rside) in zip([:west, :south, :bottom], [:east, :north, :bottom])
-    fill_both_halo! = Symbol(:fill_, lside, :_and_, rside, :_halo!)
+    fill_both_halo!  = Symbol(:fill_, lside, :_and_, rside, :_halo!)
     fill_left_halo!  = Symbol(:fill_, lside, :_halo!)
     fill_right_halo! = Symbol(:fill_, rside, :_halo!)
 
     @eval begin
-        function $fill_both_halo!(c, left_bc::CBC, right_bc::CBC, loc, arch, dep, grid, args...; kwargs...) 
-             $fill_left_halo!(c,  left_bc, arch, dep, grid, args...; kwargs...)
-            $fill_right_halo!(c, right_bc, arch, dep, grid, args...; kwargs...)
-            return NoneEvent()
-        end   
         function $fill_both_halo!(c, left_bc::CBC, right_bc, loc, arch, dep, grid, args...; kwargs...) 
             event = $fill_right_halo!(c, right_bc, arch, dep, grid, args...; kwargs...)
             $fill_left_halo!(c,  left_bc, arch, event, grid, args...; kwargs...)
-            return NoneEvent()
+            return device_event(arch)
         end   
         function $fill_both_halo!(c, left_bc, right_bc::CBC, loc, arch, dep, grid, args...; kwargs...) 
             event = $fill_left_halo!(c, left_bc, arch, dep, grid, args...; kwargs...)
             $fill_right_halo!(c, right_bc, arch, event, grid, args...; kwargs...)
-            return NoneEvent()
+            return device_event(arch)
         end   
     end
+end
+
+####
+#### Both side fill_halo! for Communicating boundary conditions
+####
+    
+function fill_west_and_east_halo!(c, westbc::CBC, eastbc::CBC, loc, arch, dep, grid, buffers, args...; kwargs...)
+    
+    H = halo_size(grid)[1]
+    N = size(grid)[1]
+
+    westsrc = buffers[westbc.condition.from_rank].east.send
+    eastsrc = buffers[eastbc.condition.from_rank].west.send
+
+    westdst = buffers[westbc.condition.rank].west.recv
+    eastdst = buffers[eastbc.condition.rank].east.recv
+    wait(device(arch), dep)
+
+    copyto!(westdst, westsrc)
+    copyto!(eastdst, eastsrc)
+
+    view(parent(c), 1:H, :, :)        .= westdst
+    view(parent(c), N+H+1:N+2H, :, :) .= eastdst
+
+    return device_event(arch)
 end
 
 #####
@@ -110,18 +132,10 @@ end
 function fill_west_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args...; kwargs...)
     
     H = halo_size(grid)[1]
-    N = size(grid)[1]
-    w = neighbors[bc.condition.from_rank]
+    src = buffers[bc.condition.from_rank].east.send
     dst = buffers[bc.condition.rank].west.recv
-
     wait(device(arch), dep)
 
-    switch_device!(getdevice(w))
-    src = buffers[bc.condition.from_rank].east.send
-    src .= view(parent(w), N+1:N+H, :, :)
-    sync_device!(getdevice(w))
-
-    switch_device!(getdevice(c))
     copyto!(dst, src)
 
     p  = view(parent(c), 1:H, :, :)
@@ -134,17 +148,10 @@ function fill_east_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args..
 
     H = halo_size(grid)[1]
     N = size(grid)[1]
-    e = neighbors[bc.condition.from_rank]
+    src = buffers[bc.condition.from_rank].west.send
     dst = buffers[bc.condition.rank].east.recv
-
     wait(device(arch), dep)
 
-    switch_device!(getdevice(e))
-    src = buffers[bc.condition.from_rank].west.send
-    src .= view(parent(e), H+1:2H, :, :)
-    sync_device!(getdevice(e))
-
-    switch_device!(getdevice(c))    
     copyto!(dst, src)
 
     p  = view(parent(c), N+H+1:N+2H, :, :)
@@ -157,21 +164,13 @@ function fill_south_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args.
         
     H = halo_size(grid)[2]
     N = size(grid)[2]
-    s = neighbors[bc.condition.from_rank]
+    src = buffers[bc.condition.from_rank].north.send
     dst = buffers[bc.condition.rank].south.recv
-
     wait(device(arch), dep)
 
-    switch_device!(getdevice(s))
-    src = buffers[bc.condition.from_rank].north.send
-    src .= view(parent(s), :, N+1:N+H, :)
-    sync_device!(getdevice(s))
-
-    switch_device!(getdevice(c))
     copyto!(dst, src)
 
-    p  = view(parent(c), :, 1:H, :)
-    p .= dst
+    view(parent(c), :, 1:H, :) .= dst
 
     return nothing
 end
@@ -180,99 +179,47 @@ function fill_north_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args.
     
     H = halo_size(grid)[2]
     N = size(grid)[2]
-    n = neighbors[bc.condition.from_rank]
-    dst = buffers[bc.condition.rank].north.recv
-
-    wait(device(arch), dep)
-
-    switch_device!(getdevice(n))
     src = buffers[bc.condition.from_rank].south.send
-    src .= view(parent(n), :, H+1:2H, :)
-    sync_device!(getdevice(n))
-
-    switch_device!(getdevice(c))    
+    dst = buffers[bc.condition.rank].north.recv
+    wait(device(arch), dep)
     copyto!(dst, src)
 
-    p  = view(parent(c), :, N+H+1:N+2H, :)
-    p .= dst
+    view(parent(c), :, N+H+1:N+2H, :) .= dst
 
     return nothing
 end
 
-#####
-##### Tupled fill_halo! for Communicating boundary condition 
-#####
-    
-function fill_west_halo!(c::NTuple, bc::NTuple{M, CBC}, arch, dep, grid, neighbors, buffers, args...; kwargs...) where M
-    
-    ## Can we take this off??
-    wait(dep)
-    
-    H = halo_size(grid)[1]
-    N = size(grid)[1]
+####
+#### Fill boundary buffers (if not a Nothing)
+####
 
-    dst = []
-    src = []
-    for n in M
-        push!(dst, buffers[n][bc[n].condition.rank].west...)
-        push!(src, buffers[n][bc[n].condition.from_rank].west...)
-    end
-    
-    switch_device!(getdevice(neighbors[1][bc[1].condition.from_rank]))
-    
-    @sync for n in 1:M
-        @async begin
-            w = neighbors[n][bc[n].condition.from_rank]
-            src[n] .= parent(w)[N+1:N+H, :, :]
-        end
-    end
-    sync_device!(getdevice(src[1]))
-
-    switch_device!(getdevice(c[1]))
-    copyto!(dst, src)
-
-    @sync for n in 1:M
-        @async begin
-            p  = view(parent(c[n]), 1:H, :, :)
-            p .= dst[n]
-        end
-    end
-
+function fill_boundary_buffers!(buffer, c, arch, grid)
+    fill_buffer!(buffer.west, c, grid, :west)
+    fill_buffer!(buffer.east, c, grid, :east)
+    fill_buffer!(buffer.south, c, grid, :south)
+    fill_buffer!(buffer.north, c, grid, :north)
     return nothing
 end
 
-function fill_east_halo!(c::NTuple, bc::NTuple{M, CBC}, arch, dep, grid, neighbors, args...; kwargs...) where M
-    
-    ## Can we take this off??
-    wait(dep)
-    
-    H = halo_size(grid)[1]
-    N = size(grid)[1]
+@inline fill_buffer!(::Nothing, args...) = nothing
 
-    dst = arch_array(arch, zeros(M, H, size(parent(c[1]), 2), size(parent(c[1]), 3)))
+@inline function fill_buffer!(buffer, c, grid, side)
+    indices = halo_indices(side, grid)
+    buffer.send .= view(parent(c), indices...)
+end
 
-    switch_device!(getdevice(neighbors[1][bc[1].condition.from_rank]))
-    src = arch_array(arch, zeros(M, H, size(parent(c[1]), 2), size(parent(c[1]), 3)))
-    
-    @sync for n in 1:M
-        @async begin
-            e = neighbors[n][bc[n].condition.from_rank]
-            src[n, :, :, :] .= parent(e)[H+1:2H, :, :]
-        end
+@inline function halo_indices(side, grid)
+    Hx, Hy, Hz = halo_size(grid)
+    Nx, Ny, Nz = size(grid)
+    if side == :west
+        return (Hx+1:2Hx, :, :)
+    elseif side == :east
+        return (Nx+1:Nx+Hx, :, :)
+    elseif side == :south
+        return (:, Hy+1:2Hy, :)
+    elseif side == :north
+        return (:, Ny+1:Ny+Hy, :)
     end
-
-    sync_device!(getdevice(src[1]))
-    
-    switch_device!(getdevice(c[1]))
-    copyto!(dst, src)
-    @sync for n in 1:M
-        @async begin
-            p  = view(parent(c[n]),  N+H+1:N+2H, :, :)
-            p .= dst[n, :, :, :]
-        end
-    end
-
-    return nothing
 end
 
 #####
