@@ -30,6 +30,9 @@ end
 ### Multi region functions
 ###
 
+@inline device_copy_to!(a, b, ::CuDevice) = CUDA.copyto!(a, b)
+@inline device_copy_to!(a, b, device)     = Base.copyto!(a, b)
+
 @inline getdevice(a, i)                     = nothing
 @inline getdevice(cu::GPUVar, i)            = CUDA.device(cu)
 @inline getdevice(cu::OffsetArray, i)       = getdevice(cu.parent)

@@ -261,8 +261,6 @@ T_init = multi_region_object_from_array(file_init["T"], mrg)
 S_init = multi_region_object_from_array(file_init["S"], mrg)
 
 set!(model, T=T_init, S=S_init)
-fill_halo_regions!(T)
-fill_halo_regions!(S)
 
 @info "model initialized"
 

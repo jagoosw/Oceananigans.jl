@@ -50,6 +50,7 @@ end
 
 fill_halo_regions!(c::MultiRegionObject, ::Nothing, args...; kwargs...) = nothing
 
+
 #####
 ##### fill_halo_regions! for a MultiRegionObject
 #####
@@ -64,7 +65,7 @@ function fill_halo_regions!(c::MultiRegionObject, bcs, loc, mrg::MultiRegionGrid
 
     halo_tuple = construct_regionally(permute_boundary_conditions, bcs)
 
-    apply_regionally!(fill_boundary_buffers!, buffers, c, arch, mrg)
+    @apply_regionally fill_send_boundary_buffers!(buffers, c, arch, mrg)
 
     for task = 1:3
         barrier = device_event(arch)
@@ -77,52 +78,53 @@ function fill_halo_regions!(c::MultiRegionObject, bcs, loc, mrg::MultiRegionGrid
 end
 
 #####
-##### fill_halo! for Communicating boundary condition 
+##### Both side fill_halo! for Communicating boundary conditions
 #####
-    
-## Fill communicating boundary condition halos
-for (lside, rside) in zip([:west, :south, :bottom], [:east, :north, :bottom])
-    fill_both_halo!  = Symbol(:fill_, lside, :_and_, rside, :_halo!)
-    fill_left_halo!  = Symbol(:fill_, lside, :_halo!)
-    fill_right_halo! = Symbol(:fill_, rside, :_halo!)
-
-    @eval begin
-        function $fill_both_halo!(c, left_bc::CBC, right_bc, loc, arch, dep, grid, args...; kwargs...) 
-            event = $fill_right_halo!(c, right_bc, arch, dep, grid, args...; kwargs...)
-            $fill_left_halo!(c,  left_bc, arch, event, grid, args...; kwargs...)
-            return device_event(arch)
-        end   
-        function $fill_both_halo!(c, left_bc, right_bc::CBC, loc, arch, dep, grid, args...; kwargs...) 
-            event = $fill_left_halo!(c, left_bc, arch, dep, grid, args...; kwargs...)
-            $fill_right_halo!(c, right_bc, arch, event, grid, args...; kwargs...)
-            return device_event(arch)
-        end   
-    end
-end
-
-####
-#### Both side fill_halo! for Communicating boundary conditions
-####
     
 function fill_west_and_east_halo!(c, westbc::CBC, eastbc::CBC, loc, arch, dep, grid, buffers, args...; kwargs...)
     
     H = halo_size(grid)[1]
     N = size(grid)[1]
 
+    # @info "We are inside here!"
+    wait(device(arch), dep)
+
     westsrc = buffers[westbc.condition.from_rank].east.send
     eastsrc = buffers[eastbc.condition.from_rank].west.send
 
-    westdst = buffers[westbc.condition.rank].west.recv
-    eastdst = buffers[eastbc.condition.rank].east.recv
+    rank  = westbc.condition.rank
+    
+    westdst = buffers[rank].west.recv
+    eastdst = buffers[rank].east.recv
+
+    device_copy_to!(westdst, westsrc, getdevice(c))
+    device_copy_to!(eastdst, eastsrc, getdevice(c))
+
+    fill_event = launch!(arch, grid, size(parent(c))[[2, 3]], _fill_west_and_east_halo_from_buffer!, 
+                         parent(c), westdst, eastdst, H, N; dependencies=device_event(arch), kwargs...)
+
+    return fill_event
+end
+    
+function fill_south_and_north_halo!(c, southbc::CBC, northbc::CBC, loc, arch, dep, grid, buffers, args...; kwargs...)
+    
+    H = halo_size(grid)[2]
+    N = size(grid)[2]
     wait(device(arch), dep)
 
-    copyto!(westdst, westsrc)
-    copyto!(eastdst, eastsrc)
+    southsrc = buffers[southbc.condition.from_rank].north.send
+    northsrc = buffers[northbc.condition.from_rank].south.send
 
-    view(parent(c), 1:H, :, :)        .= westdst
-    view(parent(c), N+H+1:N+2H, :, :) .= eastdst
+    southdst = buffers[southbc.condition.rank].south.recv
+    northdst = buffers[northbc.condition.rank].north.recv
 
-    return device_event(arch)
+    device_copy_to!(southdst, southsrc, getdevice(c))
+    device_copy_to!(northdst, northsrc, getdevice(c))
+
+    fill_event = launch!(arch, grid, size(parent(c))[[1, 3]], _fill_south_and_north_halo_from_buffer!, 
+                         parent(c), southdst, northdst, H, N; dependencies=device_event(arch), kwargs...)
+
+    return fill_event
 end
 
 #####
@@ -132,93 +134,91 @@ end
 function fill_west_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args...; kwargs...)
     
     H = halo_size(grid)[1]
-    src = buffers[bc.condition.from_rank].east.send
-    dst = buffers[bc.condition.rank].west.recv
+    N = size(grid)[1]
     wait(device(arch), dep)
 
-    copyto!(dst, src)
+    src = buffers[bc.condition.from_rank].east.send
+    dst = buffers[bc.condition.rank].west.recv
+    
+    device_copy_to!(dst, src, getdevice(c))
 
-    p  = view(parent(c), 1:H, :, :)
-    p .= dst
+    fill_event = launch!(arch, grid, size(parent(c))[[2, 3]], _fill_west_halo_from_buffer!, 
+                         parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
 
-    return nothing
+    return fill_event
 end
 
 function fill_east_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args...; kwargs...)
 
     H = halo_size(grid)[1]
     N = size(grid)[1]
-    src = buffers[bc.condition.from_rank].west.send
-    dst = buffers[bc.condition.rank].east.recv
     wait(device(arch), dep)
 
-    copyto!(dst, src)
+    src = buffers[bc.condition.from_rank].west.send
+    dst = buffers[bc.condition.rank].east.recv
 
-    p  = view(parent(c), N+H+1:N+2H, :, :)
-    p .= dst
+    device_copy_to!(dst, src, getdevice(c))
 
-    return nothing
+    fill_event = launch!(arch, grid, size(parent(c))[[2, 3]], _fill_east_halo_from_buffer!, 
+                         parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
+
+    return fill_event
 end
 
 function fill_south_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args...; kwargs...)
         
     H = halo_size(grid)[2]
     N = size(grid)[2]
-    src = buffers[bc.condition.from_rank].north.send
-    dst = buffers[bc.condition.rank].south.recv
     wait(device(arch), dep)
 
-    copyto!(dst, src)
+    src = buffers[bc.condition.from_rank].north.send
+    dst = buffers[bc.condition.rank].south.recv
 
-    view(parent(c), :, 1:H, :) .= dst
+    device_copy_to!(dst, src, getdevice(c))
 
-    return nothing
+    fill_event = launch!(arch, grid, size(parent(c))[[1, 3]], _fill_south_halo_from_buffer!, 
+                         parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
+
+    return fill_event
 end
 
 function fill_north_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args...; kwargs...)
     
     H = halo_size(grid)[2]
     N = size(grid)[2]
+    wait(device(arch), dep)
+
     src = buffers[bc.condition.from_rank].south.send
     dst = buffers[bc.condition.rank].north.recv
-    wait(device(arch), dep)
-    copyto!(dst, src)
+    
+    device_copy_to!(dst, src, getdevice(c))
 
-    view(parent(c), :, N+H+1:N+2H, :) .= dst
+    fill_event = launch!(arch, grid, size(parent(c))[[1, 3]], _fill_south_halo_from_buffer!, 
+                         parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
 
-    return nothing
+    return fill_event
 end
 
-####
-#### Fill boundary buffers (if not a Nothing)
-####
+#####
+##### Dispatch for Mixed BC cases
+#####
 
-function fill_boundary_buffers!(buffer, c, arch, grid)
-    fill_buffer!(buffer.west, c, grid, :west)
-    fill_buffer!(buffer.east, c, grid, :east)
-    fill_buffer!(buffer.south, c, grid, :south)
-    fill_buffer!(buffer.north, c, grid, :north)
-    return nothing
-end
+for (lside, rside) in zip([:west, :south, :bottom], [:east, :north, :bottom])
+    fill_both_halo!  = Symbol(:fill_, lside, :_and_, rside, :_halo!)
+    fill_left_halo!  = Symbol(:fill_, lside, :_halo!)
+    fill_right_halo! = Symbol(:fill_, rside, :_halo!)
 
-@inline fill_buffer!(::Nothing, args...) = nothing
-
-@inline function fill_buffer!(buffer, c, grid, side)
-    indices = halo_indices(side, grid)
-    buffer.send .= view(parent(c), indices...)
-end
-
-@inline function halo_indices(side, grid)
-    Hx, Hy, Hz = halo_size(grid)
-    Nx, Ny, Nz = size(grid)
-    if side == :west
-        return (Hx+1:2Hx, :, :)
-    elseif side == :east
-        return (Nx+1:Nx+Hx, :, :)
-    elseif side == :south
-        return (:, Hy+1:2Hy, :)
-    elseif side == :north
-        return (:, Ny+1:Ny+Hy, :)
+    @eval begin
+        function $fill_both_halo!(c, left_bc::CBC, right_bc, loc, arch, dep, grid, args...; kwargs...) 
+            event = $fill_right_halo!(c, right_bc, arch, dep, grid, args...; kwargs...)
+            $fill_left_halo!(c,  left_bc, arch, event, grid, args...; kwargs...)
+            return NoneEvent()
+        end   
+        function $fill_both_halo!(c, left_bc, right_bc::CBC, loc, arch, dep, grid, args...; kwargs...) 
+            event = $fill_left_halo!(c, left_bc, arch, dep, grid, args...; kwargs...)
+            $fill_right_halo!(c, right_bc, arch, event, grid, args...; kwargs...)
+            return NoneEvent()
+        end   
     end
 end
 
@@ -238,36 +238,36 @@ end
 @inline getregion(bc::BoundaryCondition, i) = BoundaryCondition(bc.classification, _getregion(bc.condition, i))
 
 @inline getregion(cf::ContinuousBoundaryFunction{X, Y, Z, I}, i) where {X, Y, Z, I} =
-    ContinuousBoundaryFunction{X, Y, Z, I}(cf.func::F,
-                                           _getregion(cf.parameters, i),
-                                           cf.field_dependencies,
-                                           cf.field_dependencies_indices,
-                                           cf.field_dependencies_interp)
+        ContinuousBoundaryFunction{X, Y, Z, I}(cf.func::F,
+                                                _getregion(cf.parameters, i),
+                                                cf.field_dependencies,
+                                                cf.field_dependencies_indices,
+                                                cf.field_dependencies_interp)
 
 @inline getregion(df::DiscreteBoundaryFunction, i) =
-    DiscreteBoundaryFunction(df.func, _getregion(df.parameters, i))
+        DiscreteBoundaryFunction(df.func, _getregion(df.parameters, i))
 
 
 @inline _getregion(fc::FieldBoundaryConditions, i) = 
-FieldBoundaryConditions(getregion(fc.west, i), 
-                        getregion(fc.east, i), 
-                        getregion(fc.south, i), 
-                        getregion(fc.north, i), 
-                        getregion(fc.bottom, i),
-                        getregion(fc.top, i),
-                        fc.immersed)
+        FieldBoundaryConditions(getregion(fc.west, i), 
+                                getregion(fc.east, i), 
+                                getregion(fc.south, i), 
+                                getregion(fc.north, i), 
+                                getregion(fc.bottom, i),
+                                getregion(fc.top, i),
+                                fc.immersed)
 
 @inline _getregion(bc::BoundaryCondition, i) = BoundaryCondition(bc.classification, getregion(bc.condition, i))
 
 @inline _getregion(cf::ContinuousBoundaryFunction{X, Y, Z, I}, i) where {X, Y, Z, I} =
-ContinuousBoundaryFunction{X, Y, Z, I}(cf.func::F,
-                                   getregion(cf.parameters, i),
-                                   cf.field_dependencies,
-                                   cf.field_dependencies_indices,
-                                   cf.field_dependencies_interp)
+        ContinuousBoundaryFunction{X, Y, Z, I}(cf.func::F,
+                                        getregion(cf.parameters, i),
+                                        cf.field_dependencies,
+                                        cf.field_dependencies_indices,
+                                        cf.field_dependencies_interp)
 
 @inline _getregion(df::DiscreteBoundaryFunction, i) =
-DiscreteBoundaryFunction(df.func, getregion(df.parameters, i))
+        DiscreteBoundaryFunction(df.func, getregion(df.parameters, i))
 
 # Everything goes for multi-region BC
 validate_boundary_condition_location(::MultiRegionObject, ::Center, side)       = nothing 

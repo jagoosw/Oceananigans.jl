@@ -15,12 +15,14 @@ compute_auxiliary_fields!(auxiliary_fields) = Tuple(compute!(a) for a in auxilia
 Update peripheral aspects of the model (auxiliary fields, halo regions, diffusivities,
 hydrostatic pressure) to the current model state.
 """
-function update_state!(model::HydrostaticFreeSurfaceModel)
+
+update_state!(model::HydrostaticFreeSurfaceModel) = update_state!(model, model.grid)
+
+function update_state!(model::HydrostaticFreeSurfaceModel, grid)
 
     @apply_regionally masking_actions!(model)
 
     fill_halo_regions!(prognostic_fields(model), model.clock, fields(model))
-
     fill_horizontal_velocity_halos!(model.velocities.u, model.velocities.v, model.architecture)
 
     @apply_regionally update_state_actions!(model)

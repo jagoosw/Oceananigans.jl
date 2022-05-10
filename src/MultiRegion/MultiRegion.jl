@@ -17,7 +17,8 @@ using OffsetArrays
 using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid
 using Oceananigans.Utils: Reference, Iterate
 
-using KernelAbstractions: Event, NoneEvent, @kernel, @index
+using KernelAbstractions: MultiEvent, Event, NoneEvent, @kernel, @index
+using KernelAbstractions.Extras.LoopInfo: @unroll
 
 import Base: show, length, size
 
@@ -42,6 +43,7 @@ include("y_partitions.jl")
 include("multi_region_grid.jl")
 include("multi_region_field.jl")
 include("multi_region_abstract_operations.jl")
+include("multi_region_fill_halo_points.jl")
 include("multi_region_boundary_conditions.jl")
 include("multi_region_reductions.jl")
 include("unified_heptadiagonal_iterative_solver.jl")
