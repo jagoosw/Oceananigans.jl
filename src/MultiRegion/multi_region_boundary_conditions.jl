@@ -1,5 +1,5 @@
 using Oceananigans: instantiated_location
-using Oceananigans.Architectures: arch_array, device_event
+using Oceananigans.Architectures: arch_array, device_event, device_copy_to!
 using Oceananigans.Operators: assumed_field_location
 using Oceananigans.Fields: reduced_dimensions
 
@@ -97,8 +97,8 @@ function fill_west_and_east_halo!(c, westbc::CBC, eastbc::CBC, loc, arch, dep, g
     westdst = buffers[rank].west.recv
     eastdst = buffers[rank].east.recv
 
-    device_copy_to!(westdst, westsrc, getdevice(c))
-    device_copy_to!(eastdst, eastsrc, getdevice(c))
+    device_copy_to!(westdst, westsrc)
+    device_copy_to!(eastdst, eastsrc)
 
     fill_event = launch!(arch, grid, size(parent(c))[[2, 3]], _fill_west_and_east_halo_from_buffer!, 
                          parent(c), westdst, eastdst, H, N; dependencies=device_event(arch), kwargs...)
@@ -118,8 +118,8 @@ function fill_south_and_north_halo!(c, southbc::CBC, northbc::CBC, loc, arch, de
     southdst = buffers[southbc.condition.rank].south.recv
     northdst = buffers[northbc.condition.rank].north.recv
 
-    device_copy_to!(southdst, southsrc, getdevice(c))
-    device_copy_to!(northdst, northsrc, getdevice(c))
+    device_copy_to!(southdst, southsrc)
+    device_copy_to!(northdst, northsrc)
 
     fill_event = launch!(arch, grid, size(parent(c))[[1, 3]], _fill_south_and_north_halo_from_buffer!, 
                          parent(c), southdst, northdst, H, N; dependencies=device_event(arch), kwargs...)
@@ -140,7 +140,7 @@ function fill_west_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args..
     src = buffers[bc.condition.from_rank].east.send
     dst = buffers[bc.condition.rank].west.recv
     
-    device_copy_to!(dst, src, getdevice(c))
+    device_copy_to!(dst, src)
 
     fill_event = launch!(arch, grid, size(parent(c))[[2, 3]], _fill_west_halo_from_buffer!, 
                          parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
@@ -157,7 +157,7 @@ function fill_east_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args..
     src = buffers[bc.condition.from_rank].west.send
     dst = buffers[bc.condition.rank].east.recv
 
-    device_copy_to!(dst, src, getdevice(c))
+    device_copy_to!(dst, src)
 
     fill_event = launch!(arch, grid, size(parent(c))[[2, 3]], _fill_east_halo_from_buffer!, 
                          parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
@@ -174,7 +174,7 @@ function fill_south_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args.
     src = buffers[bc.condition.from_rank].north.send
     dst = buffers[bc.condition.rank].south.recv
 
-    device_copy_to!(dst, src, getdevice(c))
+    device_copy_to!(dst, src)
 
     fill_event = launch!(arch, grid, size(parent(c))[[1, 3]], _fill_south_halo_from_buffer!, 
                          parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
@@ -191,7 +191,7 @@ function fill_north_halo!(c, bc::CBC, arch, dep, grid, neighbors, buffers, args.
     src = buffers[bc.condition.from_rank].south.send
     dst = buffers[bc.condition.rank].north.recv
     
-    device_copy_to!(dst, src, getdevice(c))
+    device_copy_to!(dst, src)
 
     fill_event = launch!(arch, grid, size(parent(c))[[1, 3]], _fill_south_halo_from_buffer!, 
                          parent(c), dst, H, N; dependencies=device_event(arch), kwargs...)
