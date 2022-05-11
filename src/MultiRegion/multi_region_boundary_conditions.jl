@@ -1,5 +1,5 @@
 using Oceananigans: instantiated_location
-using Oceananigans.Architectures: arch_array, device_event, device_copy_to!, sync_stream!
+using Oceananigans.Architectures: arch_array, device_event, device_copy_to!
 using Oceananigans.Operators: assumed_field_location
 using Oceananigans.Fields: reduced_dimensions
 
@@ -95,10 +95,8 @@ function fill_west_and_east_halo!(c, westbc::CBC, eastbc::CBC, loc, arch, dep, g
     westdst = buffers[rank].west.recv
     eastdst = buffers[rank].east.recv
 
-    streamwest = device_copy_to!(westdst, westsrc; async = true)
-    streameast = device_copy_to!(eastdst, eastsrc; async = true)
-    sync_stream!(streamwest)
-    sync_stream!(streameast)
+    device_copy_to!(westdst, westsrc)
+    device_copy_to!(eastdst, eastsrc)
 
     fill_event = launch!(arch, grid, size(parent(c))[[2, 3]], _fill_west_and_east_halo_from_buffer!, 
                          parent(c), westdst, eastdst, H, N; dependencies=device_event(arch), kwargs...)
@@ -118,10 +116,8 @@ function fill_south_and_north_halo!(c, southbc::CBC, northbc::CBC, loc, arch, de
     southdst = buffers[southbc.condition.rank].south.recv
     northdst = buffers[northbc.condition.rank].north.recv
 
-    streamnorth = device_copy_to!(southdst, southsrc; async = true)
-    streamsouth = device_copy_to!(northdst, northsrc; async = true)
-    sync_stream!(streamnorth)
-    sync_stream!(streamsouth)
+    device_copy_to!(southdst, southsrc)
+    device_copy_to!(northdst, northsrc)
 
     fill_event = launch!(arch, grid, size(parent(c))[[1, 3]], _fill_south_and_north_halo_from_buffer!, 
                          parent(c), southdst, northdst, H, N; dependencies=device_event(arch), kwargs...)
