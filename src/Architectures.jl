@@ -137,7 +137,7 @@ end
     return dst
 end
 
-@inline device_copy_to!(dst::Array, scr::Array; kw...) = Base.copyto!(a, b)
+@inline device_copy_to!(dst::Array, scr::Array; kw...) = Base.copyto!(dst, src)
 
 device_event(arch) = Event(device(arch))
 
