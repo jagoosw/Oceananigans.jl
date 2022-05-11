@@ -1,17 +1,15 @@
 using Statistics
 using JLD2
 using Printf
-using Plots
 using Oceananigans
 using Oceananigans.Units
 
-using Oceananigans.MultiRegion
-using Oceananigans.MultiRegion: multi_region_object_from_array
+using CUDA
 using Oceananigans.Fields: interpolate, Field
 using Oceananigans.Architectures: arch_array
 using Oceananigans.Coriolis: HydrostaticSphericalCoriolis
 using Oceananigans.BoundaryConditions
-using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid, GridFittedBottom, solid_node, solid_interface
+using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid, GridFittedBottom, inactive_node, peripheral_node
 using CUDA: @allowscalar, device!
 using Oceananigans.Operators
 using Oceananigans.Operators: Δzᵃᵃᶜ
@@ -27,6 +25,7 @@ using Oceananigans: prognostic_fields
     return r
 end
 
+CUDA.device!(3)
 #####
 ##### Grid
 #####
@@ -41,7 +40,7 @@ Nx = 1440
 Ny = 600
 Nz = 48
 
-const Nyears  = 1
+const Nyears  = 10
 const Nmonths = 12 
 const thirty_days = 30days
 
@@ -105,39 +104,36 @@ z_faces = file_z_faces["z_faces"][3:end]
                                               size = (Nx, Ny, Nz),
                                               longitude = (-180, 180),
                                               latitude = latitude,
-                                              halo = (3, 3, 3),
+                                              halo = (4, 4, 4),
                                               z = z_faces,
                                               precompute_metrics = true)
 
 grid = ImmersedBoundaryGrid(underlying_grid, GridFittedBottom(bathymetry))
 
-underlying_mrg = MultiRegionGrid(underlying_grid, partition = XPartition(2), devices = (1, 3))
-mrg            = MultiRegionGrid(grid,            partition = XPartition(2), devices = (1, 3))
+τˣ = arch_array(arch, - τˣ)
+τʸ = arch_array(arch, - τʸ)
 
-τˣ = multi_region_object_from_array(- τˣ, mrg)
-τʸ = multi_region_object_from_array(- τʸ, mrg)
-
-target_sea_surface_temperature = T★ = multi_region_object_from_array(T★, mrg)
-target_sea_surface_salinity    = S★ = multi_region_object_from_array(S★, mrg)
+target_sea_surface_temperature = T★ = arch_array(arch, T★)
+target_sea_surface_salinity    = S★ = arch_array(arch, S★)
 
 #####
 ##### Physics and model setup
 #####
 
-νh = 1e+1
 νz = 5e-3
-κh = 1e+1
 κz = 1e-4
 
 using Oceananigans.Operators: Δx, Δy
 using Oceananigans.TurbulenceClosures
+using Oceananigans.TurbulenceClosures: HorizontalDivergenceFormulation
+using Oceananigans.TurbulenceClosures.CATKEVerticalDiffusivities: CATKEVerticalDiffusivity
 
 @inline νhb(i, j, k, grid, lx, ly, lz) = (1 / (1 / Δx(i, j, k, grid, lx, ly, lz)^2 + 1 / Δy(i, j, k, grid, lx, ly, lz)^2 ))^2 / 5days
 
-horizontal_diffusivity = HorizontalScalarDiffusivity(ν=νh, κ=κh)
+# convective_adjustment  = ConvectiveAdjustmentVerticalDiffusivity(VerticallyImplicitTimeDiscretization(), convective_κz = 1.0)
 vertical_diffusivity   = VerticalScalarDiffusivity(VerticallyImplicitTimeDiscretization(), ν=νz, κ=κz)
-convective_adjustment  = ConvectiveAdjustmentVerticalDiffusivity(VerticallyImplicitTimeDiscretization(), convective_κz = 1.0)
-biharmonic_viscosity   = HorizontalScalarBiharmonicDiffusivity(ν=νhb, discrete_form=true)
+convective_adjustment  = CATKEVerticalDiffusivity()
+biharmonic_viscosity   = ScalarBiharmonicDiffusivity(HorizontalDivergenceFormulation(), ν=νhb, discrete_form=true)
                                                     
 #####
 ##### Boundary conditions / time-dependent fluxes 
@@ -172,8 +168,8 @@ v_wind_stress_bc = FluxBoundaryCondition(surface_wind_stress, discrete_form = tr
 # Linear bottom drag:
 μ = 0.001 # ms⁻¹
 
-@inline is_immersed_drag_u(i, j, k, grid) = Int(solid_interface(Face(), Center(), Center(), i, j, k-1, grid) & !solid_node(Face(), Center(), Center(), i, j, k, grid))
-@inline is_immersed_drag_v(i, j, k, grid) = Int(solid_interface(Center(), Face(), Center(), i, j, k-1, grid) & !solid_node(Center(), Face(), Center(), i, j, k, grid))                                
+@inline is_immersed_drag_u(i, j, k, grid) = Int(peripheral_node(Face(), Center(), Center(), i, j, k-1, grid) & !inactive_node(Face(), Center(), Center(), i, j, k, grid))
+@inline is_immersed_drag_v(i, j, k, grid) = Int(peripheral_node(Center(), Face(), Center(), i, j, k-1, grid) & !inactive_node(Center(), Face(), Center(), i, j, k, grid))                                
 
 # Keep a constant linear drag parameter independent on vertical level
 @inline u_immersed_bottom_drag(i, j, k, grid, clock, fields, μ) = @inbounds - μ * is_immersed_drag_u(i, j, k, grid) * fields.u[i, j, k] / Δzᵃᵃᶜ(i, j, k, grid)
@@ -233,20 +229,19 @@ T_bcs = FieldBoundaryConditions(top = T_surface_relaxation_bc)
 S_bcs = FieldBoundaryConditions(top = S_surface_relaxation_bc)
 
 free_surface = ImplicitFreeSurface(solver_method=:HeptadiagonalIterativeSolver)
-# free_surface = ExplicitFreeSurface()
 
 buoyancy = SeawaterBuoyancy(equation_of_state=LinearEquationOfState())
 
-model = HydrostaticFreeSurfaceModel(grid = mrg,
+model = HydrostaticFreeSurfaceModel(grid = grid,
                                     free_surface = free_surface,
                                     momentum_advection = VectorInvariant(),
                                     coriolis = HydrostaticSphericalCoriolis(),
                                     buoyancy = buoyancy,
                                     tracers = (:T, :S),
-                                    closure = (horizontal_diffusivity, vertical_diffusivity, convective_adjustment, biharmonic_viscosity),
+                                    closure = (vertical_diffusivity, convective_adjustment, biharmonic_viscosity),
                                     boundary_conditions = (u=u_bcs, v=v_bcs, T=T_bcs, S=S_bcs),
                                     forcing = (u=Fu, v=Fv),
-                                    tracer_advection = WENO5(underlying_mrg))
+                                    tracer_advection = WENO5(underlying_grid))
 
 #####
 ##### Initial condition:
@@ -258,8 +253,8 @@ T = model.tracers.T
 S = model.tracers.S
 
 @info "Reading initial conditions"
-T_init = multi_region_object_from_array(file_init["T"], mrg)
-S_init = multi_region_object_from_array(file_init["S"], mrg)
+T_init = arch_array(arch, file_init["T"])
+S_init = arch_array(arch, file_init["S"])
 
 set!(model, T=T_init, S=S_init)
 fill_halo_regions!(T)
@@ -286,10 +281,9 @@ function progress(sim)
     u = sim.model.velocities.u
     η = sim.model.free_surface.η
 
-    @info @sprintf("Time: % 12s, iteration: %d, wall time: %s", 
-                    #"Time: % 12s, iteration: %d, max(|u|): %.2e ms⁻¹, max(|η|): %.2e m, wall time: %s", 
+    @info @sprintf("Time: % 12s, iteration: %d, max(|u|): %.2e ms⁻¹, wall time: %s", 
                     prettytime(sim.model.clock.time),
-                    sim.model.clock.iteration, #maximum(abs, u), maximum(abs, η),
+                    sim.model.clock.iteration, maximum(abs, u), #, maximum(abs, η),
                     prettytime(wall_time))
 
     start_time[1] = time_ns()
