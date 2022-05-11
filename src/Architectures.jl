@@ -126,13 +126,13 @@ end
 ## Only for contiguous data!! (i.e. the offset is always 1)
 @inline function device_copy_to!(dst::CuArray, src::CuArray; async::Bool = false) 
     n = length(src)
+    stream = CUDA.stream()
     context!(context(src)) do
-        copy_stream = stream()
         GC.@preserve src dst begin
-            unsafe_copyto!(pointer(dst, 1), pointer(src, 1), n; async, stream = copy_stream)
+            unsafe_copyto!(pointer(dst, 1), pointer(src, 1), n; async, stream)
         end
     end
-    return copy_stream
+    return stream
 end
 
 @inline function device_copy_to!(dst::Array, scr::Array; kw...) 
@@ -140,8 +140,8 @@ end
     return nothing
 end
 
-@inline sync_stream!(stream::CuStream) = synchronize(stream)
-@inlien sync_stream!(stream::Nothing)  = nothing 
+@inline sync_stream!(stream::CuStream) = CUDA.synchronize(stream)
+@inline sync_stream!(stream::Nothing)  = nothing 
 
 device_event(arch) = Event(device(arch))
 
