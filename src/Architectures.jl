@@ -124,20 +124,24 @@ function unified_array(::GPU, arr::AbstractArray)
 end
 
 ## Only for contiguous data!! (i.e. the offset is always 1)
-@inline function device_copy_to!(dst::CuArray{T}, src::CuArray{T}; async::Bool = false) where T
+@inline function device_copy_to!(dst::CuArray, src::CuArray; async::Bool = false) 
     n = length(src)
     context!(context(src)) do
+        copy_stream = stream()
         GC.@preserve src dst begin
-            unsafe_copyto!(pointer(dst, 1), pointer(src, 1), n; async)
-            if Base.isbitsunion(T)
-                unsafe_copyto!(typetagdata(dst, 1), typetagdata(src, 1), n; async)
-            end
+            unsafe_copyto!(pointer(dst, 1), pointer(src, 1), n; async, stream = copy_stream)
         end
     end
-    return dst
+    return copy_stream
 end
 
-@inline device_copy_to!(dst::Array, scr::Array; kw...) = Base.copyto!(dst, src)
+@inline function device_copy_to!(dst::Array, scr::Array; kw...) 
+    Base.copyto!(dst, src)
+    return nothing
+end
+
+@inline sync_stream!(stream::CuStream) = synchronize(stream)
+@inlien sync_stream!(stream::Nothing)  = nothing 
 
 device_event(arch) = Event(device(arch))
 
