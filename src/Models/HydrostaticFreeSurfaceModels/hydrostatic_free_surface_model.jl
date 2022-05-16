@@ -13,7 +13,7 @@ using Oceananigans.Grids: halo_size, inflate_halo_size, with_halo, AbstractRecti
 using Oceananigans.Grids: AbstractCurvilinearGrid, AbstractHorizontallyCurvilinearGrid, architecture
 using Oceananigans.Models.NonhydrostaticModels: extract_boundary_conditions
 using Oceananigans.TimeSteppers: Clock, TimeStepper, update_state!
-using Oceananigans.TurbulenceClosures: validate_closure, with_tracers, DiffusivityFields, add_closure_specific_boundary_conditions
+using Oceananigans.TurbulenceClosures: validate_closure, with_tracers, DiffusivityFields, AuxiliaryPrognosticFields, add_closure_specific_boundary_conditions
 using Oceananigans.TurbulenceClosures: time_discretization, implicit_diffusion_solver
 using Oceananigans.LagrangianParticleTracking: LagrangianParticles
 using Oceananigans.Utils: tupleit
@@ -26,24 +26,25 @@ validate_tracer_advection(tracer_advection::AbstractAdvectionScheme, grid) = tra
 PressureField(grid) = (; pHY′ = CenterField(grid))
 
 mutable struct HydrostaticFreeSurfaceModel{TS, E, A<:AbstractArchitecture, S,
-                                           G, T, V, B, R, F, P, U, C, Φ, K, AF} <: AbstractModel{TS}
+                                           G, T, V, B, R, F, P, U, C, Φ, K, AF, APF} <: AbstractModel{TS}
   
-          architecture :: A        # Computer `Architecture` on which `Model` is run
-                  grid :: G        # Grid of physical points on which `Model` is solved
-                 clock :: Clock{T} # Tracks iteration number and simulation time of `Model`
-             advection :: V        # Advection scheme for tracers
-              buoyancy :: B        # Set of parameters for buoyancy model
-              coriolis :: R        # Set of parameters for the background rotation rate of `Model`
-          free_surface :: S        # Free surface parameters and fields
-               forcing :: F        # Container for forcing functions defined by the user
-               closure :: E        # Diffusive 'turbulence closure' for all model fields
-             particles :: P        # Particle set for Lagrangian tracking
-            velocities :: U        # Container for velocity fields `u`, `v`, and `w`
-               tracers :: C        # Container for tracer fields
-              pressure :: Φ        # Container for hydrostatic pressure
-    diffusivity_fields :: K        # Container for turbulent diffusivities
-           timestepper :: TS       # Object containing timestepper fields and parameters
-      auxiliary_fields :: AF       # User-specified auxiliary fields for forcing functions and boundary conditions
+                  architecture :: A        # Computer `Architecture` on which `Model` is run
+                          grid :: G        # Grid of physical points on which `Model` is solved
+                         clock :: Clock{T} # Tracks iteration number and simulation time of `Model`
+                     advection :: V        # Advection scheme for tracers
+                      buoyancy :: B        # Set of parameters for buoyancy model
+                      coriolis :: R        # Set of parameters for the background rotation rate of `Model`
+                  free_surface :: S        # Free surface parameters and fields
+                       forcing :: F        # Container for forcing functions defined by the user
+                       closure :: E        # Diffusive 'turbulence closure' for all model fields
+                     particles :: P        # Particle set for Lagrangian tracking
+                    velocities :: U        # Container for velocity fields `u`, `v`, and `w`
+                       tracers :: C        # Container for tracer fields
+                      pressure :: Φ        # Container for hydrostatic pressure
+            diffusivity_fields :: K        # Container for turbulent diffusivities
+                   timestepper :: TS       # Object containing timestepper fields and parameters
+              auxiliary_fields :: AF       # User-specified auxiliary fields for forcing functions and boundary conditions
+  additional_prognostic_fields :: APF
 end
 
 """
@@ -105,6 +106,7 @@ function HydrostaticFreeSurfaceModel(; grid,
                                           pressure = nothing,
                                 diffusivity_fields = nothing,
                                   auxiliary_fields = NamedTuple(),
+                       auxiliary_prognostic_fields = nothing,
     )
 
     # Check halos and throw an error if the grid's halo is too small
@@ -158,6 +160,8 @@ function HydrostaticFreeSurfaceModel(; grid,
     tracers            = TracerFields(tracers, grid, boundary_conditions)
     pressure           = PressureField(grid)
     diffusivity_fields = DiffusivityFields(diffusivity_fields, grid, tracernames(tracers), boundary_conditions, closure)
+   
+    auxiliary_prognostic_fields = AuxiliaryPrognosticFields(auxiliary_prognostic_fields, grid, tracernames(tracers), closure)
 
     @apply_regionally validate_velocity_boundary_conditions(velocities)
 
@@ -186,7 +190,8 @@ function HydrostaticFreeSurfaceModel(; grid,
 
     model = HydrostaticFreeSurfaceModel(arch, grid, clock, advection, buoyancy, coriolis,
                                         free_surface, forcing, closure, particles, velocities, tracers,
-                                        pressure, diffusivity_fields, timestepper, auxiliary_fields)
+                                        pressure, diffusivity_fields, timestepper, auxiliary_fields, 
+                                        auxiliary_prognostic_fields)
 
     update_state!(model)
 

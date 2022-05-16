@@ -157,6 +157,34 @@ function calculate_hydrostatic_free_surface_interior_tendency_contributions!(mod
         push!(events, Gc_event)
     end
 
+    for auxiliary_prognostic_field in model.auxiliary_prognostic_fields
+        tendency        = auxiliary_prognostic_field.Gⁿ
+        kernel_function = auxiliary_prognostic_field.kernel_function
+        kernel_size     = auxiliary_prognostic_field.kernel_size 
+        dims            = auxiliary_prognostic_field.dims
+
+        Gc_event = launch!(arch, grid, kernel_size,
+                           calculate_hydrostatic_free_surface_Ga!,
+                           tendency,
+                           kernel_function,
+                           dims, 
+                           grid,
+                           auxiliary_field,
+                           model.tracer_advection,
+                           model.closure,
+                           model.buoyancy,
+                           model.velocities,
+                           model.free_surface,
+                           model.tracers,
+                           model.diffusivity_fields,
+                           model.auxiliary_fields,
+                           model.auxiliary_prognostic_fields,
+                           model.clock;
+                           dependencies = barrier)
+
+        push!(events, Gc_event)
+    end
+
     wait(device(arch), MultiEvent(Tuple(events)))
 
     return nothing
@@ -186,6 +214,24 @@ end
 @kernel function calculate_hydrostatic_free_surface_Gc!(Gc, tendency_kernel_function, grid, args...)
     i, j, k = @index(Global, NTuple)
     @inbounds Gc[i, j, k] = tendency_kernel_function(i, j, k, grid, args...)
+end
+
+#####
+##### Tendency calculators for auxiliary prognostic fields
+#####
+
+""" Calculate the right-hand-side of auxiliary prognostic equation. """
+@kernel function calculate_hydrostatic_free_surface_Ga!(Ga, tendency_kernel_function, dims, grid, args...)
+    if dims == 1
+        i = @index(Global, Linear)
+        @inbounds Ga[i, 1, 1] = tendency_kernel_function(i, grid, args...)
+    elseif dims == 2
+        i, j = @index(Global, NTuple)
+        @inbounds Ga[i, j, 1] = tendency_kernel_function(i, j, grid, args...)
+    else
+        i, j, k = @index(Global, NTuple)
+        @inbounds Ga[i, j, k] = tendency_kernel_function(i, j, k, grid, args...)
+    end
 end
 
 #####

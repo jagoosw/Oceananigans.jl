@@ -22,10 +22,6 @@ function ab2_step!(model::HydrostaticFreeSurfaceModel, Δt, χ)
     # waiting all the ab2 steps (velocities, free_surface and tracers to complete)
     @apply_regionally wait(device(model.architecture), prognostic_field_events)
 
-
-    # @apply_regionally local_ab2_step!(model, Δt, χ)
-    # ab2_step_free_surface!(model.free_surface, model, Δt, χ, nothing)    
-
     return nothing
 end
 
@@ -37,17 +33,14 @@ function local_ab2_step!(model, Δt, χ)
         barotropic_mode!(sefs.state.U, sefs.state.V, model.grid, u, v)
     end
 
-    explicit_velocity_step_events = ab2_step_velocities!(model.velocities, model, Δt, χ)
-    explicit_tracer_step_events   = ab2_step_tracers!(model.tracers, model, Δt, χ)
-    
+    explicit_velocity_step_events    = ab2_step_velocities!(model.velocities, model, Δt, χ)
+    explicit_tracer_step_events      = ab2_step_tracers!(model.tracers, model, Δt, χ)
+    explicit_auxiliary_step_events   = ab2_step_auxiliary!(model.auxiliary_prognostic_fields, model, Δt, χ)
+
     prognostic_field_events = (tuple(explicit_velocity_step_events...),
-        tuple(explicit_tracer_step_events...))
+        tuple(explicit_tracer_step_events..., explicit_auxiliary_step_events...))
 
     return prognostic_field_events    
-
-    # wait(device(model.architecture), MultiEvent(tuple(explicit_velocity_step_events..., explicit_tracer_step_events...)))
-
-    # return nothing
 end
 
 #####
@@ -133,5 +126,27 @@ function ab2_step_tracers!(tracers, model, Δt, χ)
     end
 
     return explicit_tracer_step_events
+end
+
+ab2_step_auxiliary!(::EmptyNamedTuple, model, Δt, χ) = [NoneEvent()]
+
+function ab2_step_auxiliary!(auxiliary_prognostic_fields, model, Δt, χ)
+
+    # Tracer update kernels
+    explicit_auxiliary_step_events = []
+
+    for auxiliary_prognostic_field in auxiliary_prognostic_fields
+        Gⁿ = auxiliary_prognostic_field.Gⁿ[tracer_name]
+        G⁻ = auxiliary_prognostic_field.G⁻[tracer_name]
+        auxiliary_field = auxiliary_prognostic_field.field
+
+        event = launch!(model.architecture, model.grid, :xyz,
+                        ab2_step_field!, tracer_field, Δt, χ, Gⁿ, G⁻,
+                        dependencies = device_event(model))
+
+        push!(explicit_tracer_step_events, event)
+    end
+
+    return explicit_auxiliary_step_events
 end
 
