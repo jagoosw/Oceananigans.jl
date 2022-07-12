@@ -17,13 +17,13 @@ function time_step_hydrostatic_model_works(grid;
     tracers = [:T, :S]
     closure isa CATKEVerticalDiffusivity && push!(tracers, :e)
 
-    model = HydrostaticFreeSurfaceModel(grid = grid,
-                                        momentum_advection = momentum_advection,
-                                        free_surface = free_surface,
-                                        coriolis = coriolis,
-                                        tracers = tracers,
-                                        velocities = velocities,
-                                        closure = closure)
+    model = HydrostaticFreeSurfaceModel(; grid,
+                                        momentum_advection,
+                                        free_surface,
+                                        coriolis,
+                                        tracers,
+                                        velocities,
+                                        closure)
 
     simulation = Simulation(model, Δt=1.0, stop_iteration=1)
 
@@ -34,7 +34,7 @@ end
 
 function hydrostatic_free_surface_model_tracers_and_forcings_work(arch)
     grid = RectilinearGrid(arch, size=(1, 1, 1), extent=(2π, 2π, 2π))
-    model = HydrostaticFreeSurfaceModel(grid=grid, tracers=(:T, :S, :c, :d))
+    model = HydrostaticFreeSurfaceModel(; grid, tracers=(:T, :S, :c, :d))
 
     @test model.tracers.T isa Field
     @test model.tracers.S isa Field
@@ -74,7 +74,7 @@ topos_3d = ((Periodic, Periodic, Bounded),
         @info "  Testing $topo_1d model construction..."
         for arch in archs, FT in [Float64] #float_types
             grid = RectilinearGrid(arch, FT, topology=topo_1d, size=(1), extent=(1))
-            model = HydrostaticFreeSurfaceModel(grid=grid)
+            model = HydrostaticFreeSurfaceModel(; grid)
             @test model isa HydrostaticFreeSurfaceModel
 
             # SingleColumnGrid tests
@@ -89,7 +89,7 @@ topos_3d = ((Periodic, Periodic, Bounded),
             @info "  Testing $topo model construction..."
             for arch in archs, FT in float_types
                 grid = RectilinearGrid(arch, FT, topology=topo, size=(1, 1), extent=(1, 2))
-                model = HydrostaticFreeSurfaceModel(grid=grid)
+                model = HydrostaticFreeSurfaceModel(; grid)
                 @test model isa HydrostaticFreeSurfaceModel
                 @test :η ∈ keys(fields(model)) # contrary to the SingleColumnGrid case
             end
@@ -101,7 +101,7 @@ topos_3d = ((Periodic, Periodic, Bounded),
             @info "  Testing $topo model construction..."
             for arch in archs, FT in float_types
                 grid = RectilinearGrid(arch, FT, topology=topo, size=(1, 1, 1), extent=(1, 2, 3))
-                model = HydrostaticFreeSurfaceModel(grid=grid)
+                model = HydrostaticFreeSurfaceModel(; grid)
                 @test model isa HydrostaticFreeSurfaceModel
             end
         end
@@ -112,11 +112,11 @@ topos_3d = ((Periodic, Periodic, Bounded),
             grid = RectilinearGrid(topology=topo, size=(1, 1, 1), extent=(1, 2, 3), halo=(1, 1, 1))
             hcabd_closure = ScalarBiharmonicDiffusivity()
 
-            @test_throws ArgumentError HydrostaticFreeSurfaceModel(grid=grid, tracer_advection=CenteredFourthOrder())
-            @test_throws ArgumentError HydrostaticFreeSurfaceModel(grid=grid, tracer_advection=UpwindBiasedThirdOrder())
-            @test_throws ArgumentError HydrostaticFreeSurfaceModel(grid=grid, tracer_advection=UpwindBiasedFifthOrder())
-            @test_throws ArgumentError HydrostaticFreeSurfaceModel(grid=grid, momentum_advection=UpwindBiasedFifthOrder())
-            @test_throws ArgumentError HydrostaticFreeSurfaceModel(grid=grid, closure=hcabd_closure)
+            @test_throws ArgumentError HydrostaticFreeSurfaceModel(; grid, tracer_advection=CenteredFourthOrder())
+            @test_throws ArgumentError HydrostaticFreeSurfaceModel(; grid, tracer_advection=UpwindBiasedThirdOrder())
+            @test_throws ArgumentError HydrostaticFreeSurfaceModel(; grid, tracer_advection=UpwindBiasedFifthOrder())
+            @test_throws ArgumentError HydrostaticFreeSurfaceModel(; grid, momentum_advection=UpwindBiasedFifthOrder())
+            @test_throws ArgumentError HydrostaticFreeSurfaceModel(; grid, closure=hcabd_closure)
 
             # Big enough
             bigger_grid = RectilinearGrid(topology=topo, size=(1, 1, 1), extent=(1, 2, 3), halo=(3, 3, 3))
@@ -142,7 +142,7 @@ topos_3d = ((Periodic, Periodic, Bounded),
             L = (2π, 3π, 5π)
 
             grid = RectilinearGrid(arch, FT, size=N, extent=L)
-            model = HydrostaticFreeSurfaceModel(grid=grid)
+            model = HydrostaticFreeSurfaceModel(; grid)
 
             x, y, z = nodes((Face, Center, Center), model.grid, reshape=true)
 
@@ -184,6 +184,7 @@ topos_3d = ((Periodic, Periodic, Bounded),
         lat_lon_strip_grid_stretched  = LatitudeLongitudeGrid(arch, size=(1, 1, 1), longitude=(-180, 180), latitude=(15, 75), z=z_face_generator(), precompute_metrics=true)
 
         grids = (rectilinear_grid, lat_lon_sector_grid, lat_lon_strip_grid, lat_lon_sector_grid_stretched, lat_lon_strip_grid_stretched, vertically_stretched_grid)
+        
         free_surfaces = (ExplicitFreeSurface(), ImplicitFreeSurface(), ImplicitFreeSurface(solver_method=:HeptadiagonalIterativeSolver))
 
         for grid in grids

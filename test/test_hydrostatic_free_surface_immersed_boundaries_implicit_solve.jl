@@ -1,16 +1,15 @@
 using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid, GridFittedBottom
 using Oceananigans.Architectures: arch_array
 using Oceananigans.TurbulenceClosures
-using Oceananigans.Models.HydrostaticFreeSurfaceModels: compute_vertically_integrated_volume_flux!
-using Oceananigans.Models.HydrostaticFreeSurfaceModels: compute_implicit_free_surface_right_hand_side!
-using Oceananigans.Models.HydrostaticFreeSurfaceModels: pressure_correct_velocities!
+
+using Oceananigans.Models.HydrostaticFreeSurfaceModels: implicit_free_surface_step!
 
 @testset "Immersed boundaries test divergent flow solve with hydrostatic free surface models" begin
     @info "Testing immersed boundaries divergent flow solve"
 
     for arch in archs
-        Nx = 11 
-        Ny = 11 
+        Nx = 11
+        Ny = 11
         Nz = 1
 
         underlying_grid = RectilinearGrid(arch,
@@ -19,10 +18,10 @@ using Oceananigans.Models.HydrostaticFreeSurfaceModels: pressure_correct_velocit
                                           halo = (3, 3, 3),
                                           topology = (Periodic, Periodic, Bounded))
 
-        imm1=Int( floor((Nx+1)/2)   )
-        imp1=Int( floor((Nx+1)/2)+1 )
-        jmm1=Int( floor((Ny+1)/2)   )
-        jmp1=Int( floor((Ny+1)/2)+1 )
+        imm1 = Int(floor((Nx+1)/2)  )
+        imp1 = Int(floor((Nx+1)/2)+1)
+        jmm1 = Int(floor((Ny+1)/2)  )
+        jmp1 = Int(floor((Ny+1)/2)+1)
 
         bottom = [-1. for i=1:Nx, j=1:Ny ]
         bottom[imm1-1:imp1+1, jmm1-1:jmp1+1] .= 0
@@ -31,7 +30,7 @@ using Oceananigans.Models.HydrostaticFreeSurfaceModels: pressure_correct_velocit
         grid = ImmersedBoundaryGrid(underlying_grid, GridFittedBottom(B))
 
         free_surfaces = [ImplicitFreeSurface(solver_method=:HeptadiagonalIterativeSolver, gravitational_acceleration=1.0),
-                         ImplicitFreeSurface(solver_method=:PreconditionedConjugateGradient, gravitational_acceleration=1.0), 
+                         ImplicitFreeSurface(solver_method=:PreconditionedConjugateGradient, gravitational_acceleration=1.0),
                          ImplicitFreeSurface(gravitational_acceleration=1.0)]
 
         sol = ()
@@ -39,8 +38,8 @@ using Oceananigans.Models.HydrostaticFreeSurfaceModels: pressure_correct_velocit
 
         for free_surface in free_surfaces
 
-            model = HydrostaticFreeSurfaceModel(grid = grid,
-                                                free_surface = free_surface,
+            model = HydrostaticFreeSurfaceModel(; grid,
+                                                free_surface,
                                                 buoyancy = nothing,
                                                 tracers = nothing,
                                                 closure = nothing)

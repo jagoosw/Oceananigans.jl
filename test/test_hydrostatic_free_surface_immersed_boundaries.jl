@@ -23,7 +23,7 @@ using Oceananigans.TurbulenceClosures
             for closure in (ScalarDiffusivity(ν=1, κ=0.5),
                             ScalarDiffusivity(VerticallyImplicitTimeDiscretization(), ν=1, κ=0.5))
 
-                model = HydrostaticFreeSurfaceModel(grid = grid, 
+                model = HydrostaticFreeSurfaceModel(; grid, 
                                                     tracers = :b,
                                                     buoyancy = BuoyancyTracer(),
                                                     closure = closure)
@@ -95,8 +95,8 @@ using Oceananigans.TurbulenceClosures
 
             model = HydrostaticFreeSurfaceModel(; grid,
                                                 momentum_advection = VectorInvariant(),
-                                                free_surface = free_surface,
-                                                coriolis = coriolis,
+                                                free_surface,
+                                                coriolis,
                                                 boundary_conditions = (u=u_bcs, v=v_bcs),
                                                 closure = constant_horizontal_diffusivity,
                                                 tracers = nothing,
@@ -163,4 +163,3 @@ using Oceananigans.TurbulenceClosures
         end
     end
 end
-

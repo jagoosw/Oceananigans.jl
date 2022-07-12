@@ -4,14 +4,7 @@ using Statistics
 using Oceananigans.BuoyancyModels: g_Earth
 using Oceananigans.Architectures: device_event
 
-using Oceananigans.Models.HydrostaticFreeSurfaceModels:
-    ImplicitFreeSurface,
-    FreeSurface,
-    FFTImplicitFreeSurfaceSolver,
-    PCGImplicitFreeSurfaceSolver,
-    MatrixImplicitFreeSurfaceSolver, 
-    implicit_free_surface_step!,
-    implicit_free_surface_linear_operation!
+using Oceananigans.Models.HydrostaticFreeSurfaceModels: implicit_free_surface_step!
 
 function set_simple_divergent_velocity!(model)
     # Create a divergent velocity
