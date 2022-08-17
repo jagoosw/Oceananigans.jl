@@ -35,6 +35,10 @@ function calculate_tendencies!(model::NonhydrostaticModel)
     return nothing
 end
 
+buoyancy_tracers(t, b::LinearSeawaterBuoyancy) = (T = t.T, S=t.S)
+buoyancy_tracers(t, b::LinearTemperatureSeawaterBuoyancy) = (T = t.T, S=t.S)
+buoyancy_tracers(t, b::LinearSalinitySeawaterBuoyancy) = (T = t.T, S=t.S)
+
 """ Store previous value of the source term and calculate current source term. """
 function calculate_interior_tendency_contributions!(model)
 
@@ -77,7 +81,7 @@ function calculate_interior_tendency_contributions!(model)
                                     buoyancy,
                                     background_fields,
                                     velocities,
-                                    tracers,
+                                    buoyancy_tracers(tracers, buoyancy.model),
                                     diffusivities,
                                     forcings,
                                     hydrostatic_pressure,
@@ -94,7 +98,7 @@ function calculate_interior_tendency_contributions!(model)
                                     buoyancy,
                                     background_fields,
                                     velocities,
-                                    tracers,
+                                    buoyancy_tracers(tracers, buoyancy.model),
                                     diffusivities,
                                     forcings,
                                     hydrostatic_pressure,
@@ -111,7 +115,7 @@ function calculate_interior_tendency_contributions!(model)
                                     buoyancy,
                                     background_fields,
                                     velocities,
-                                    tracers,
+                                    buoyancy_tracers(tracers, buoyancy.model),
                                     diffusivities,
                                     forcings,
                                     clock,
