@@ -188,6 +188,38 @@ function tracer_conserved_in_channel(arch, FT, Nt)
     return isapprox(Tavg, Tavg0, atol=Nx*Ny*Nz*eps(FT))
 end
 
+"""
+    tracer_positivity(arch, FT, Nt)
+
+Run model of tracers coupled by a simple production/destruction system with large timestep and ensure positivity is maintained
+"""
+function tracer_conserved_in_channel(arch, FT, Nt)
+    P_rhs(x, y, z, t, P, N, D) = P*N/(N+1) - 0.1*P
+    N_rhs(x, y, z, t, P, N, D) = -P*N/(N+1)
+    D_rhs(x, y, z, t, P, N, D) = 0.1*P
+    P_forcing = Forcing(P_rhs, field_dependencies=(:P, :N, :D))
+    N_forcing = Forcing(N_rhs, field_dependencies=(:P, :N, :D))
+    D_forcing = Forcing(D_rhs, field_dependencies=(:P, :N, :D))
+    
+    Nx, Ny, Nz = 5, 5, 5
+    Lx, Ly, Lz = 20, 20, 20
+
+    topology = (Periodic, Periodic, Bounded)
+    grid = RectilinearGrid(arch, size=(Nx, Ny, Nz), extent=(Lx, Ly, Lz))
+    model = NonhydrostaticModel(grid = grid, timestepper = :PatankarRungeKutta3, forcing = (P = P_forcing, N = N_forcing, D = D_forcing), tracers=(:P, :N, :D))
+
+    set!(model, P=rand(5, 5, 5), N=2 .*rand(5, 5, 5), D=0.0)
+
+    total = sum(model.tracers.P) + sum(model.tracers.N)
+    
+    update_state!(model)
+    for n in 1:Nt
+        time_step!(model, 10)
+    end
+
+    return all(model.tracers.P .>= 0) && all(model.tracers.N .>= 0) && all(model.tracers.D .>= 0) && (sum(model.tracers.P) + sum(model.tracers.N)  ≈ total)
+end
+
 function time_stepping_with_background_fields(arch)
 
     grid = RectilinearGrid(arch, size=(1, 1, 1), extent=(1, 1, 1))
@@ -237,7 +269,7 @@ advection_schemes = (nothing,
                      UpwindBiasedFifthOrder(),
                      WENO())
 
-timesteppers = (:QuasiAdamsBashforth2, :RungeKutta3)
+timesteppers = (PatankarRungeKutta3, )#(:QuasiAdamsBashforth2, :RungeKutta3)
 
 @testset "Time stepping" begin
     @info "Testing time stepping..."

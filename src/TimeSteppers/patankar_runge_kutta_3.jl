@@ -7,14 +7,14 @@ using Oceananigans: fields
 Holds parameters and tendency fields for a low storage, third-order Runge-Kutta-Wray
 time-stepping scheme described by Le and Moin (1991).
 """
-struct PatankarRungeKutta3TimeStepper{FT, TG, TN, TI} <: AbstractTimeStepper
+struct PatankarRungeKutta3TimeStepper{FT, TG, TI} <: AbstractTimeStepper
                  γ¹ :: FT
                  γ² :: FT
                  γ³ :: FT
                  ζ² :: FT
                  ζ³ :: FT
                  Gⁿ :: TG
-                 G⁻ :: TN
+                 G⁻ :: TG
     implicit_solver :: TI
 end
 
@@ -23,8 +23,6 @@ end
                            implicit_solver = nothing,
                            Gⁿ = TendencyFields(grid, tracers),
                            G⁻ = TendencyFields(grid, tracers),
-                           Dⁿ = TendencyFields(grid, tracers),
-                           D⁻ = TendencyFields(grid, tracers))
 
 Return a 3rd-order Patankar Runge Kutta timestepper (`RungeKutta3TimeStepper`) on `grid` and with `tracers`.
 The tendency fields `Pⁿ`, `Dⁿ`, `P⁻` and `s` can be specified via  optional `kwargs`.
@@ -50,7 +48,7 @@ The state at the first substep is taken to be the one that corresponds to the ``
 function PatankarRungeKutta3TimeStepper(grid::AbstractGrid{FT, LX, LY, LZ}, tracers;
                                 implicit_solver::TI = nothing,
                                 Gⁿ::TG = TendencyFields(grid, tracers, T=Complex{FT}),
-                                G⁻::TN = TendencyFields(grid, tracers)) where {FT, LX, LY, LZ, TI, TG, TN}
+                                G⁻ = TendencyFields(grid, tracers, T=Complex{FT})) where {FT, LX, LY, LZ, TI, TG}
 
     !isnothing(implicit_solver) &&
         @warn("Implicit-explicit time-stepping with RungeKutta3TimeStepper is not tested. " * 
@@ -63,7 +61,7 @@ function PatankarRungeKutta3TimeStepper(grid::AbstractGrid{FT, LX, LY, LZ}, trac
     ζ² = -17 // 60
     ζ³ = -5 // 12
 
-    return PatankarRungeKutta3TimeStepper{FT, TG, TN, TI}(γ¹, γ², γ³, ζ², ζ³, Gⁿ, G⁻, implicit_solver)
+    return PatankarRungeKutta3TimeStepper{FT, TG, TI}(γ¹, γ², γ³, ζ², ζ³, Gⁿ, G⁻, implicit_solver)
 end
 
 #####
@@ -78,7 +76,7 @@ The 3rd-order Runge-Kutta method takes three intermediate substep stages to
 achieve a single timestep. A pressure correction step is applied at each intermediate
 stage.
 """
-function time_step!(model::AbstractModel{<:RungeKutta3TimeStepper}, Δt)
+function time_step!(model::AbstractModel{<:PatankarRungeKutta3TimeStepper}, Δt)
     Δt == 0 && @warn "Δt == 0 may cause model blowup!"
 
     # Be paranoid and update state at iteration 0, in case run! is not used:
@@ -218,10 +216,10 @@ end
     i, j, k = @index(Global, NTuple)
 
     @inbounds begin
-        Dⁿ = imag(Gⁿ[i, j, k])
-        Pⁿ = real(Gⁿ[i, j, k])
+        D¹ = imag(G¹[i, j, k])
+        P¹ = real(G¹[i, j, k])
         U⁰ = U[i, j, k]
 
-        U[i, j, k] = U⁰*(U⁰ + γ¹*Δt*Pⁿ)/(U⁰+γ¹*Δt*Dⁿ)
+        U[i, j, k] = U⁰*(U⁰ + γ¹*Δt*P¹)/(U⁰+γ¹*Δt*D¹)
     end
 end
