@@ -11,7 +11,7 @@ import Oceananigans.TimeSteppers: update_state!
 
 Update peripheral aspects of the model (halo regions, diffusivities, hydrostatic pressure) to the current model state.
 """
-function update_state!(model::NonhydrostaticModel, callbacks=[])
+function update_state!(model::NonhydrostaticModel, callbacks=[], Δt=nothing)
     
     # Mask immersed tracers
     tracer_masking_events = Tuple(mask_immersed_field!(c) for c in model.tracers)
@@ -33,7 +33,7 @@ function update_state!(model::NonhydrostaticModel, callbacks=[])
     update_hydrostatic_pressure!(model)
     fill_halo_regions!(model.pressures.pHY′)
 
-    [callback(model) for callback in callbacks if isa(callback.callsite, UpdateStateCallsite)]
+    [callback(model, Δt) for callback in callbacks if isa(callback.callsite, UpdateStateCallsite)]
 
     return nothing
 end

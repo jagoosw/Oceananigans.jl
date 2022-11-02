@@ -15,7 +15,7 @@ using Oceananigans.BoundaryConditions
 Calculate the interior and boundary contributions to tendency terms without the
 contribution from non-hydrostatic pressure.
 """
-function calculate_tendencies!(model::ShallowWaterModel, callbacks)
+function calculate_tendencies!(model::ShallowWaterModel, callbacks, Δt)
 
     # Note:
     #
@@ -52,7 +52,7 @@ function calculate_tendencies!(model::ShallowWaterModel, callbacks)
                                                model.clock,
                                                fields(model))
 
-    [callback(model) for callback in callbacks if isa(callback.callsite, TendencyCallsite)]
+    [callback(model, Δt) for callback in callbacks if isa(callback.callsite, TendencyCallsite)]
 
     return nothing
 end

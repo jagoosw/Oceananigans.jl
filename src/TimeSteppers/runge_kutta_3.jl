@@ -99,7 +99,7 @@ function time_step!(model::AbstractModel{<:RungeKutta3TimeStepper}, Δt; callbac
     # First stage
     #
 
-    calculate_tendencies!(model, callbacks)
+    calculate_tendencies!(model, callbacks, first_stage_Δt)
 
     correct_immersed_tendencies!(model, Δt, γ¹, 0)
 
@@ -110,14 +110,14 @@ function time_step!(model::AbstractModel{<:RungeKutta3TimeStepper}, Δt; callbac
 
     tick!(model.clock, first_stage_Δt; stage=true)
     store_tendencies!(model)
-    update_state!(model, callbacks)
+    update_state!(model, callbacks, first_stage_Δt)
     update_particle_properties!(model, first_stage_Δt)
 
     #
     # Second stage
     #
 
-    calculate_tendencies!(model, callbacks)
+    calculate_tendencies!(model, callbacks, second_stage_Δt)
 
     correct_immersed_tendencies!(model, Δt, γ², ζ²)
 
@@ -128,14 +128,14 @@ function time_step!(model::AbstractModel{<:RungeKutta3TimeStepper}, Δt; callbac
 
     tick!(model.clock, second_stage_Δt; stage=true)
     store_tendencies!(model)
-    update_state!(model, callbacks)
+    update_state!(model, callbacks, second_stage_Δt)
     update_particle_properties!(model, second_stage_Δt)
 
     #
     # Third stage
     #
 
-    calculate_tendencies!(model, callbacks)
+    calculate_tendencies!(model, callbacks, third_stage_Δt)
     
     correct_immersed_tendencies!(model, Δt, γ³, ζ³)
 
@@ -145,7 +145,7 @@ function time_step!(model::AbstractModel{<:RungeKutta3TimeStepper}, Δt; callbac
     pressure_correct_velocities!(model, third_stage_Δt)
 
     tick!(model.clock, third_stage_Δt)
-    update_state!(model, callbacks)
+    update_state!(model, callbacks, third_stage_Δt)
     update_particle_properties!(model, third_stage_Δt)
 
     return nothing
