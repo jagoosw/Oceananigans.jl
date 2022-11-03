@@ -11,6 +11,9 @@ end
 @inline (callback::Callback)(sim) = callback.func(sim, callback.parameters)
 @inline (callback::Callback{<:Nothing})(sim) = callback.func(sim)
 
+@inline (callback::Callback)(model, Δt) = callback.func(model, Δt, callback.parameters)
+@inline (callback::Callback{<:Nothing})(model, Δt) = callback.func(model, Δt)
+
 """
     Callback(func, schedule=IterationInterval(1); parameters=nothing)
 
